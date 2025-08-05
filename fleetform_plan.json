@@ -1,0 +1,1 @@
+{"plan":["aws_instance.example","aws_s3_bucket.my_bucket"],"status":"Planning..."}

@@ -1,0 +1,55 @@
+[package]
+name = "fleetform"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "A Rust-based OpenTofu provider implementation"
+license = "MIT"
+build = "build.rs"
+
+[dependencies]
+anyhow = "1.0"
+fs4 = "0.9"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+toml = "0.8"
+env_logger = "0.11"
+actix-web = "4.9"
+reqwest = { version = "0.11", features = ["json"] }
+shellwords = "1.1"
+signal-hook = "0.3"
+serde_yaml = "0.9"
+tokio = { version = "1.0", features = ["full"] }
+uuid = { version = "1.0", features = ["v4"] }
+aws-config = { version = "1.0.1", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1.4.0"
+aws-sdk-ec2 = "1.4.0"
+dirs = "5.0"
+petgraph = "0.6"
+consul = "0.4"
+hcl-rs = "0.16"
+
+# OpenTofu specific dependencies
+tonic = { version = "0.10", features = ["transport", "codegen", "prost"] }
+prost = "0.12"
+tokio-stream = { version = "0.1", features = ["net"] }
+async-stream = "0.3"
+futures-core = "0.3"
+futures-util = "0.3"
+protobuf = "3.3"
+grpc = "0.8.3"
+bytes = "1.5"
+
+# Build dependencies
+[build-dependencies]
+tonic-build = "0.10"
+prost-build = "0.12"
+
+[profile.dev]
+opt-level = 1  # Better compile times, still good for debugging
+codegen-units = 16  # More parallel code generation
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 1  # Optimize all dependencies

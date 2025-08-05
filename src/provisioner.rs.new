@@ -1,0 +1,170 @@
+use std::collections::HashMap;
+use crate::{config::Config, state::State, terminal, hcl::Block};
+use aws_sdk_s3::Client as S3Client;
+use aws_sdk_ec2::Client as Ec2Client;
+
+#[derive(Debug, Clone)]
+pub struct ResourceConfig {
+    pub resource_type: String,
+    pub name: String,
+    pub attributes: HashMap<String, String>,
+    pub module: Option<String>,
+}
+
+pub struct Provisioner {
+    s3_client: S3Client,
+    ec2_client: Ec2Client,
+    module_cache: HashMap<String, Vec<Block>>,
+}
+
+impl Provisioner {
+    pub async fn new() -> Self {
+        let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+            .load()
+            .await;
+        
+        Self {
+            s3_client: S3Client::new(&config),
+            ec2_client: Ec2Client::new(&config),
+            module_cache: HashMap::new(),
+        }
+    }
+    
+    pub async fn provision_resources(&self, config: &Config, state: &mut State) -> anyhow::Result<()> {
+        // First, collect and validate all resources
+        let mut resources = Vec::new();
+        for resource in &config.resource {
+            if let Some((module, resource_name)) = resource.split_once("module.") {
+                self.handle_module_resource(module, resource_name, &mut resources).await?;
+            } else {
+                resources.push(self.parse_resource(resource)?);
+            }
+        }
+
+        // Then provision them in parallel
+        let mut handles = Vec::new();
+        for resource in resources {
+            let resource_copy = resource.clone();
+            let s3_client = self.s3_client.clone();
+            let ec2_client = self.ec2_client.clone();
+            
+            handles.push(tokio::spawn(async move {
+                match resource_copy.resource_type.as_str() {
+                    "aws_instance" => Self::create_ec2_instance(ec2_client, &resource_copy).await,
+                    "aws_s3_bucket" => Self::create_s3_bucket(s3_client, &resource_copy).await,
+                    _ => {
+                        terminal::warn(&format!("Unknown resource type: {}", resource_copy.resource_type));
+                        Ok(())
+                    }
+                }
+            }));
+        }
+
+        // Wait for all resources to be provisioned
+        for handle in handles {
+            handle.await??;
+        }
+
+        Ok(())
+    }
+
+    async fn handle_module_resource(&self, module: &str, resource_name: &str, resources: &mut Vec<ResourceConfig>) -> anyhow::Result<()> {
+        // Load module configuration
+        let module_config = self.load_module_config(module).await?;
+        
+        // Parse module resources
+        for block in module_config {
+            if block.block_type == "resource" {
+                let mut resource = self.parse_block_to_resource(&block)?;
+                resource.module = Some(module.to_string());
+                resources.push(resource);
+            }
+        }
+        
+        Ok(())
+    }
+
+    fn parse_resource(&self, resource: &str) -> anyhow::Result<ResourceConfig> {
+        let parts: Vec<_> = resource.split('.').collect();
+        if parts.len() != 2 {
+            return Err(anyhow::anyhow!("Invalid resource format: {}", resource));
+        }
+
+        Ok(ResourceConfig {
+            resource_type: parts[0].to_string(),
+            name: parts[1].to_string(),
+            attributes: HashMap::new(),
+            module: None,
+        })
+    }
+
+    async fn create_ec2_instance(client: Ec2Client, config: &ResourceConfig) -> anyhow::Result<()> {
+        terminal::info(&format!("Creating EC2 instance {}...", config.name));
+        
+        let instance_type = config.attributes.get("instance_type")
+            .map(|s| s.as_str())
+            .unwrap_or("t2.micro");
+
+        let result = client.run_instances()
+            .image_id(config.attributes.get("ami").unwrap_or(&"ami-12345678".to_string()))
+            .instance_type(instance_type.into())
+            .min_count(1)
+            .max_count(1)
+            .send()
+            .await?;
+
+        if let Some(instance) = result.instances().and_then(|i| i.first()) {
+            if let Some(id) = instance.instance_id() {
+                terminal::success(&format!("EC2 instance created: {}", id));
+            }
+        }
+        
+        Ok(())
+    }
+    
+    async fn create_s3_bucket(client: S3Client, config: &ResourceConfig) -> anyhow::Result<()> {
+        terminal::info(&format!("Creating S3 bucket {}...", config.name));
+        
+        let bucket_name = config.attributes.get("bucket")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("fleetform-bucket-{}", uuid::Uuid::new_v4().simple()));
+
+        match client.create_bucket()
+            .bucket(&bucket_name)
+            .send()
+            .await {
+                Ok(_) => {
+                    terminal::success(&format!("S3 bucket created: {}", bucket_name));
+                    Ok(())
+                }
+                Err(e) => {
+                    terminal::error(&format!("Failed to create S3 bucket: {}", e));
+                    Err(anyhow::anyhow!("Failed to create S3 bucket: {}", e))
+                }
+            }
+    }
+
+    async fn load_module_config(&self, module: &str) -> anyhow::Result<Vec<Block>> {
+        if let Some(config) = self.module_cache.get(module) {
+            return Ok(config.clone());
+        }
+
+        let module_path = std::path::PathBuf::from("modules").join(module).join("main.tf");
+        let contents = tokio::fs::read_to_string(&module_path).await?;
+        
+        Ok(crate::hcl::parse_blocks(&contents)?)
+    }
+
+    fn parse_block_to_resource(&self, block: &Block) -> anyhow::Result<ResourceConfig> {
+        if block.labels.len() != 2 {
+            return Err(anyhow::anyhow!("Invalid resource block: expected 2 labels"));
+        }
+
+        Ok(ResourceConfig {
+            resource_type: block.labels[0].clone(),
+            name: block.labels[1].clone(),
+            attributes: block.attributes.clone(),
+            module: None,
+        })
+    }
+}

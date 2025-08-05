@@ -1,0 +1,28 @@
+# Rust
+target/
+Cargo.lock
+
+# Go
+fiber/fiber
+fiber/go.sum
+
+# Environment
+.env
+.fleetform/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp

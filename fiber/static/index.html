@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Fleetform CLI Plan Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Fira+Code&display=swap');
+
+    body {
+      font-family: 'Fira Code', monospace;
+      margin: 0;
+      padding: 20px;
+      background-color: #0d1117;
+      color: #c9d1d9;
+    }
+
+    h1 {
+      color: #58a6ff;
+      font-size: 1.6rem;
+      margin-bottom: 10px;
+    }
+
+    .status-line {
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+
+    .status.connected {
+      color: #3fb950;
+    }
+
+    .status.error {
+      color: #f85149;
+    }
+
+    #plan-output {
+      background-color: #161b22;
+      color: #c9d1d9;
+      padding: 15px;
+      border-radius: 6px;
+      border-left: 4px solid #58a6ff;
+      white-space: pre-wrap;
+      overflow-x: auto;
+      min-height: 200px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🚀 Fleetform CLI - Plan Output</h1>
+  <div class="status-line">Status: <span id="connection-status" class="status">Connecting...</span></div>
+  <pre id="plan-output">Waiting for plan data...</pre>
+
+  <script>
+    const statusEl = document.getElementById('connection-status');
+    const outputEl = document.getElementById('plan-output');
+
+    const ws = new WebSocket('ws://localhost:3001/realtime');
+
+    ws.onopen = () => {
+      statusEl.textContent = 'Connected';
+      statusEl.className = 'status connected';
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        outputEl.textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        outputEl.textContent = `Error parsing JSON:\n${event.data}`;
+        console.error('JSON Parse Error:', err);
+      }
+    };
+
+    ws.onerror = () => {
+      statusEl.textContent = 'Connection Error';
+      statusEl.className = 'status error';
+    };
+
+    ws.onclose = () => {
+      if (statusEl.textContent !== 'Connection Error') {
+        statusEl.textContent = 'Disconnected';
+        statusEl.className = 'status error';
+      }
+    };
+  </script>
+</body>
+</html>

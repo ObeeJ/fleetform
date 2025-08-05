@@ -1,0 +1,12 @@
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+linker = "rust-lld"
+
+[build]
+target = "x86_64-pc-windows-msvc"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+debug = false
