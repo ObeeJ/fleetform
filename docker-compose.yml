@@ -1,0 +1,26 @@
+version: '3.8'
+services:
+  cli:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/work
+    working_dir: /work
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+    command: ["fleetform", "plan"]
+  ui:
+    build:
+      context: .
+      dockerfile: fiber/Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./fleetform_plan.json:/app/fleetform_plan.json
+      - ./fleetform.json:/app/fleetform.json
+  consul:
+    image: consul:latest
+    ports:
+      - "8500:8500"
