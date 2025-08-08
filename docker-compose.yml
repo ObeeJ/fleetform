@@ -1,26 +1,39 @@
 version: '3.8'
+
 services:
-  cli:
+  fleetform-cli:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.cli
     volumes:
-      - .:/work
-    working_dir: /work
+      - .:/workspace
+      - ~/.aws:/root/.aws:ro
+    working_dir: /workspace
     environment:
-      - AWS_ACCESS_KEY_ID
-      - AWS_SECRET_ACCESS_KEY
-    command: ["fleetform", "plan"]
-  ui:
+      - RUST_LOG=info
+    command: ["tail", "-f", "/dev/null"]
+
+  fleetform-web:
     build:
-      context: .
-      dockerfile: fiber/Dockerfile
+      context: ./fiber
+      dockerfile: Dockerfile
     ports:
-      - "8080:8080"
+      - "3001:3001"
+    environment:
+      - GIN_MODE=release
+    depends_on:
+      - fleetform-cli
     volumes:
-      - ./fleetform_plan.json:/app/fleetform_plan.json
-      - ./fleetform.json:/app/fleetform.json
-  consul:
-    image: consul:latest
+      - ./fiber:/app
+      - .:/workspace:ro
+
+  redis:
+    image: redis:7-alpine
     ports:
-      - "8500:8500"
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+
+volumes:
+  redis_data:

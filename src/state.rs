@@ -5,6 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
+use fs4::FileExt;
 
 use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 
@@ -49,10 +50,10 @@ impl State {
         with_retry(
             || {
                 let mut file = File::open(path)?;
-                fs4::fs_std::FileExt::lock_shared(&file)?; // Lock for reading
+                FileExt::lock_shared(&file)?; // Lock for reading
                 let mut contents = String::new();
                 file.read_to_string(&mut contents)?;
-                fs4::fs_std::FileExt::unlock(&file)?; // Release lock
+                FileExt::unlock(&file)?; // Release lock
                 Ok(serde_json::from_str(&contents)?)
             },
             3,
@@ -64,11 +65,11 @@ impl State {
         with_retry(
             || {
                 let mut file = File::create(path)?;
-                fs4::fs_std::FileExt::lock_exclusive(&file)?;
+                FileExt::lock_exclusive(&file)?;
                 let contents = serde_json::to_string(self)?;
                 file.write_all(contents.as_bytes())?;
                 file.flush()?;
-                fs4::fs_std::FileExt::unlock(&file)?;
+                FileExt::unlock(&file)?;
                 Ok(())
             },
             3, // Retry 3 times

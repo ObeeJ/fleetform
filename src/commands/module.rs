@@ -3,7 +3,7 @@ use std::error::Error;
 
 #[derive(clap::Parser)]
 pub struct ModuleCmd {
-    #[command(subcommand)]
+    #[clap(subcommand)]
     command: ModuleSubCommand,
 }
 
@@ -45,16 +45,13 @@ impl Streams {
     pub fn stdout(&self, msg: &str) {
         terminal::info(msg);
     }
-    
-    pub fn error(&self, msg: &str) {
-        terminal::error(msg);
-    }
 }
-
+#[allow(dead_code)]
 pub trait Command {
     async fn run(&self, meta: Meta) -> Result<(), Box<dyn Error>>;
 }
 
+#[allow(dead_code)]
 impl Command for ModuleCmd {
     async fn run(&self, meta: Meta) -> Result<(), Box<dyn Error>> {
         let modules_dir = meta.working_dir.join("modules");

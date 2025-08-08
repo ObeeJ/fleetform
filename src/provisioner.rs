@@ -53,22 +53,18 @@ impl Provisioner {
         let mut instances = Vec::new();
 
         // Process the response and extract instance information
-        if let Some(reservations) = response.reservations() {
-            for reservation in reservations {
-                if let Some(instances_in_reservation) = reservation.instances() {
-                    for instance in instances_in_reservation {
-                        let instance_id = instance.instance_id().map(String::from);
-                        let public_ip = instance.public_ip_address().map(String::from);
-                        instances.push((instance_id, public_ip));
-                    }
-                }
+        for reservation in response.reservations() {
+            for instance in reservation.instances() {
+                let instance_id = instance.instance_id().map(String::from);
+                let public_ip = instance.public_ip_address().map(String::from);
+                instances.push((instance_id, public_ip));
             }
         }
 
         Ok(instances)
     }
     
-    pub async fn provision_resources(&self, config: &Config, state: &mut State) -> anyhow::Result<()> {
+    pub async fn provision_resources(&self, _config: &Config, state: &mut State) -> anyhow::Result<()> {
         // First, describe instances to check what's already running
         let instances = self.describe_tagged_instances("Dev").await?;
         for instance in instances {
@@ -125,7 +121,7 @@ impl Provisioner {
             .send()
             .await?;
 
-        if let Some(instance) = result.instances().and_then(|i| i.first()) {
+        if let Some(instance) = result.instances().first() {
             if let Some(id) = instance.instance_id() {
                 terminal::success(&format!("EC2 instance created: {}", id));
             }

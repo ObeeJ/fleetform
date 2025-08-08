@@ -12,6 +12,7 @@ mod config;
 mod dag;
 mod hcl;
 mod modules;
+mod proto;
 mod provisioner;
 mod provider;
 mod registry;
@@ -25,24 +26,6 @@ mod tofu {
     pub mod provider;
     pub mod schema;
 }
-
-use std::error::Error;
-use tokio::sync::mpsc;
-use tonic::{transport::Server, Request, Response, Status};
-use futures_util::StreamExt;
-
-// Generated OpenTofu protobuf types will be added here
-pub mod tfplugin6 {
-    tonic::include_proto!("tfplugin6");
-}
-
-use tfplugin6::provider_server::{Provider, ProviderServer};
-use tfplugin6::{
-    GetProviderSchema_Response,
-    Configure_Response,
-    PlanResourceChange_Response,
-    ApplyResourceChange_Response,
-};
 
 #[derive(Default)]
 pub struct OpenTofuProvider {}
@@ -113,16 +96,7 @@ async fn main() -> anyhow::Result<()> {
         terminal::warn(&format!("Failed to start UI server: {}", e));
     }
 
-    // Parse CLI args, including from environment variable
-    let mut args = std::env::args().collect::<Vec<_>>();
-
-    // Check for FLEETFORM_CLI_ARGS environment variable
-    if let Ok(env_args) = env::var("FLEETFORM_CLI_ARGS") {
-        let parsed_args = shellwords::split(&env_args)?;
-        args.extend(parsed_args);
-    }
-
-    let cli = Cli::parse_from(args);
+    let cli = Cli::parse();
 
     // Handle chdir option
     if let Some(dir) = &cli.chdir {

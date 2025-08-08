@@ -1,0 +1,12 @@
+FROM golang:1.23-alpine3.20 AS builder
+WORKDIR /app
+COPY . .
+RUN cd fiber && go build -o fiber
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /app/fiber/fiber /app/fiber
+COPY --from=builder /app/fiber/static /app/static
+WORKDIR /app
+EXPOSE 8080
+CMD ["/app/fiber"]

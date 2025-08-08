@@ -1,0 +1,7 @@
+target/
+.git/
+.github/
+*.md
+.env
+.vscode/
+node_modules/

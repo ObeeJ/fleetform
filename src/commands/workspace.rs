@@ -60,8 +60,7 @@ impl Command for WorkspaceCmd {
             WorkspaceSubCommand::Show => {
                 let current = Workspace::get_current()?;
                 meta.streams.stdout(&format!("Current workspace: {}", current));
-                Ok(())
-            },
+                Ok(())}
             WorkspaceSubCommand::List => {
                 let workspaces = Workspace::list_workspaces()?;
                 meta.streams.stdout("Available workspaces:");

@@ -3,6 +3,7 @@ pub struct Block {
     pub block_type: String,
     pub labels: Vec<String>,
     pub attributes: std::collections::HashMap<String, String>,
+    #[allow(dead_code)]
     pub blocks: Vec<Block>,
 }
 
