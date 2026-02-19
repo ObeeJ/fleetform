@@ -1,19 +1,19 @@
-# Fleetform 🚀
+# Fleetform 
 
 Modern Infrastructure as Code tool built with **Rust + Go Fiber** that surpasses OpenTofu.
 
-## ✨ Features
+## Features
 
-- **🔒 Memory-Safe**: Rust core with zero memory leaks  
-- **⚡ High Performance**: Compiled binaries faster than Go runtime  
-- **🌐 Modern UI**: Real-time web dashboard with WebSocket updates  
-- **📊 Dependency Graphs**: Visual resource relationship mapping  
-- **🔧 Module System**: Reusable configuration components  
-- **🗄️ Multi-Backend**: File, S3, Consul state management  
-- **🧪 Testing Framework**: Infrastructure validation  
-- **🌍 Cross-Platform**: Windows, Linux, macOS support  
+- ** Memory-Safe**: Rust core with zero memory leaks  
+- ** High Performance**: Compiled binaries faster than Go runtime  
+- ** Modern UI**: Real-time web dashboard with WebSocket updates  
+- ** Dependency Graphs**: Visual resource relationship mapping  
+- ** Module System**: Reusable configuration components  
+- ** Multi-Backend**: File, S3, Consul state management  
+- ** Testing Framework**: Infrastructure validation  
+- ** Cross-Platform**: Windows, Linux, macOS support  
 
-## 🚀 Quick Start
+##  Quick Start
 
 ```bash
 # Initialize workspace
@@ -29,7 +29,7 @@ cargo run -- apply
 cd fiber && go run main.go
 # Visit http://localhost:3001
 
-📋 Commands
+ Commands
 
 fleetform init                      # Initialize workspace
 fleetform plan                      # Create execution plan
@@ -38,7 +38,7 @@ fleetform providers                 # List providers
 fleetform test                      # Run tests
 fleetform workspace new <name>     # Create workspace
 
-🌐 Web Dashboard
+ Web Dashboard
 
 http://localhost:3001/ - Interactive dashboard
 
@@ -51,7 +51,7 @@ http://localhost:3001/modules - Module listing
 ws://localhost:3001/realtime - Live WebSocket updates
 
 
-🏗️ Architecture Overview
+ Architecture Overview
 
 +-------------------+          +-----------------------+          +--------------------+
 |                   |          |                       |          |                    |
@@ -83,7 +83,7 @@ Cloud & Infrastructure:
 Fleetform interacts with cloud providers (AWS) for resource provisioning and uses environment configuration to manage credentials and regions.
 
 
-🔧 Configuration
+ Configuration
 
 Create a .env file with the following variables:
 
@@ -91,7 +91,7 @@ AWS_ACCESS_KEY_ID=your_key
 AWS_SECRET_ACCESS_KEY=your_secret
 AWS_DEFAULT_REGION=us-east-1
 
-🎯 Why Fleetform > OpenTofu
+ Why Fleetform > OpenTofu
 
 Feature	Fleetform	OpenTofu
 
@@ -102,7 +102,7 @@ Performance	✅ Compiled	❌ Runtime
 Module Registry	✅ Built-in	❌ External
 
 
-🤝 Contributing
+ Contributing
 
 1. Fork the repository
 
