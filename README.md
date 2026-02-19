@@ -4,14 +4,14 @@ Modern Infrastructure as Code tool built with **Rust + Go Fiber** that surpasses
 
 ## Features
 
-- ** Memory-Safe**: Rust core with zero memory leaks  
-- ** High Performance**: Compiled binaries faster than Go runtime  
-- ** Modern UI**: Real-time web dashboard with WebSocket updates  
-- ** Dependency Graphs**: Visual resource relationship mapping  
-- ** Module System**: Reusable configuration components  
-- ** Multi-Backend**: File, S3, Consul state management  
-- ** Testing Framework**: Infrastructure validation  
-- ** Cross-Platform**: Windows, Linux, macOS support  
+- **Memory-Safe**: Rust core with zero memory leaks  
+- **High Performance**: Compiled binaries faster than Go runtime  
+- **Modern UI**: Real-time web dashboard with WebSocket updates  
+- **Dependency Graphs**: Visual resource relationship mapping  
+- **Module System**: Reusable configuration components  
+- **Multi-Backend**: File, S3, Consul state management  
+- **Testing Framework**: Infrastructure validation  
+- **Cross-Platform**: Windows, Linux, macOS support  
 
 ##  Quick Start
 
@@ -54,11 +54,11 @@ ws://localhost:3001/realtime - Live WebSocket updates
  Architecture Overview
 
 +-------------------+          +-----------------------+          +--------------------+
-|                   |          |                       |          |                    |
-|  CLI (Rust Core)   |  <---->  |   Go Fiber Web Server  |  <---->  |  Multi-Backend State|
-|  - CLI commands    |          |  - Real-time Dashboard |          |    Management       |
-|  - DAG & Planner   |          |  - WebSocket Updates   |          |  (File, S3, Consul) |
-|  - Execution Plan  |          |                       |          |                    |
+|                   |          |                        |          |                    |
+|  CLI (Rust Core)   |  <----> |   Go Fiber Web Server  |  <---->  |  Multi-Backend State|
+|  - CLI commands    |         |  - Real-time Dashboard |          |    Management       |
+|  - DAG & Planner   |         |  - WebSocket Updates   |          |  (File, S3, Consul) |
+|  - Execution Plan  |         |                        |          |                    |
 +-------------------+          +-----------------------+          +--------------------+
 
         |                               |                                  |
