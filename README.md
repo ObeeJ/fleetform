@@ -95,11 +95,11 @@ AWS_DEFAULT_REGION=us-east-1
 
 Feature	Fleetform	OpenTofu
 
-Memory Safety	✅ Rust	❌ Go
-Web Dashboard	✅ Real-time	❌ CLI only
-Dependency Graphs	✅ Visual	❌ Text
+Memory Safety✅ Rust	❌ Go
+Web Dashboard✅ Real-time	❌ CLI only
+Dependency Graphs✅ Visual	❌ Text
 Performance	✅ Compiled	❌ Runtime
-Module Registry	✅ Built-in	❌ External
+Module Registry✅ Built-in	❌ External
 
 
  Contributing
