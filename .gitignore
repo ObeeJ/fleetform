@@ -26,3 +26,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Redis snapshot (left behind by redis-server run from this directory)
+*.rdb
