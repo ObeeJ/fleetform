@@ -1,4 +1,4 @@
-use crate::{workspace::Workspace, terminal};
+use crate::{terminal, workspace::Workspace};
 use std::error::Error;
 
 #[derive(clap::Parser)]
@@ -48,19 +48,23 @@ impl Command for WorkspaceCmd {
             WorkspaceSubCommand::New { name } => {
                 let workspace = Workspace::new(name, meta.working_dir);
                 workspace.create()?;
-                meta.streams.stdout(&format!("Created workspace '{}'", name));
+                meta.streams
+                    .stdout(&format!("Created workspace '{}'", name));
                 Ok(())
-            },
+            }
             WorkspaceSubCommand::Select { name } => {
                 let workspace = Workspace::new(name, meta.working_dir);
                 workspace.switch_to()?;
-                meta.streams.stdout(&format!("Switched to workspace '{}'", name));
+                meta.streams
+                    .stdout(&format!("Switched to workspace '{}'", name));
                 Ok(())
-            },
+            }
             WorkspaceSubCommand::Show => {
                 let current = Workspace::get_current()?;
-                meta.streams.stdout(&format!("Current workspace: {}", current));
-                Ok(())}
+                meta.streams
+                    .stdout(&format!("Current workspace: {}", current));
+                Ok(())
+            }
             WorkspaceSubCommand::List => {
                 let workspaces = Workspace::list_workspaces()?;
                 meta.streams.stdout("Available workspaces:");
@@ -68,7 +72,7 @@ impl Command for WorkspaceCmd {
                     meta.streams.stdout(&format!("  {}", workspace));
                 }
                 Ok(())
-            },
+            }
         }
     }
 }

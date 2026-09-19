@@ -93,41 +93,50 @@ impl State {
 
         Ok(())
     }
-    
+
     pub async fn write_consul(&self, endpoint: &str, key: &str) -> Result<()> {
         let client = reqwest::Client::new();
         let contents = serde_json::to_string(self)?;
         let url = format!("{}/v1/kv/{}", endpoint, key);
-        
-        let response = client.put(&url)
-            .body(contents)
-            .send()
-            .await?;
-            
+
+        let response = client.put(&url).body(contents).send().await?;
+
         if response.status().is_success() {
             crate::terminal::success(&format!("State written to Consul at {}: {}", endpoint, key));
         } else {
-            return Err(anyhow::anyhow!("Failed to write to Consul: {}", response.status()));
+            return Err(anyhow::anyhow!(
+                "Failed to write to Consul: {}",
+                response.status()
+            ));
         }
         Ok(())
     }
-    
+
     pub async fn read_consul(endpoint: &str, key: &str) -> Result<Self> {
         let client = reqwest::Client::new();
         let url = format!("{}/v1/kv/{}?raw", endpoint, key);
-        
+
         match client.get(&url).send().await {
             Ok(response) => {
                 if response.status().is_success() {
                     let contents = response.text().await?;
                     let state = serde_json::from_str(&contents)?;
-                    crate::terminal::success(&format!("State read from Consul at {}: {}", endpoint, key));
+                    crate::terminal::success(&format!(
+                        "State read from Consul at {}: {}",
+                        endpoint, key
+                    ));
                     Ok(state)
                 } else if response.status() == 404 {
-                    crate::terminal::warn(&format!("No state found in Consul at {}: {}", endpoint, key));
+                    crate::terminal::warn(&format!(
+                        "No state found in Consul at {}: {}",
+                        endpoint, key
+                    ));
                     Ok(State::new())
                 } else {
-                    Err(anyhow::anyhow!("Failed to read from Consul: {}", response.status()))
+                    Err(anyhow::anyhow!(
+                        "Failed to read from Consul: {}",
+                        response.status()
+                    ))
                 }
             }
             Err(e) => {

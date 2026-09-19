@@ -27,8 +27,10 @@ pub async fn run_with_approval(auto_approve: bool) -> anyhow::Result<()> {
 
     // Use provisioner for actual resource creation
     let provisioner = crate::provisioner::Provisioner::new().await;
-    provisioner.provision_resources(&config, &mut current_state).await?;
-    
+    provisioner
+        .provision_resources(&config, &mut current_state)
+        .await?;
+
     // Use provider functions with Source struct
     let client = reqwest::Client::new();
     let provider_source = crate::provider::Source::new(client, config.clone());

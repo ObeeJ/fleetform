@@ -1,5 +1,5 @@
-use petgraph::Graph;
 use petgraph::graph::NodeIndex;
+use petgraph::Graph;
 use std::collections::HashMap;
 
 pub struct ResourceGraph {
@@ -30,7 +30,10 @@ impl ResourceGraph {
     pub fn get_ordered_resources(&self) -> Vec<String> {
         use petgraph::algo::toposort;
         let sorted = toposort(&self.graph, None).expect("Cycle detected in resource graph");
-        sorted.into_iter().map(|idx| self.graph[idx].clone()).collect()
+        sorted
+            .into_iter()
+            .map(|idx| self.graph[idx].clone())
+            .collect()
     }
 
     pub fn resource_count(&self) -> usize {
