@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use aws_sdk_ec2::types::{Filter, ResourceType, Tag, TagSpecification};
+use aws_sdk_ec2::types::{Filter, IpPermission, IpRange, ResourceType, Tag, TagSpecification};
 use aws_sdk_ec2::Client as Ec2Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -109,6 +109,13 @@ pub fn build_plan(desired: &[Block], state: &State) -> Plan {
             }
             _ => (Action::Create, "will be created".into()),
         };
+        // A key pair and security group are implied by an instance rather than
+        // declared, so say so here instead of letting apply surprise anyone.
+        let note = if resource_type == "aws_instance" && action == Action::Create {
+            format!("{}; also creates an SSH key pair and security group", note)
+        } else {
+            note
+        };
         changes.push(PlannedChange {
             address,
             resource_type,
@@ -140,6 +147,107 @@ pub fn build_plan(desired: &[Block], state: &State) -> Plan {
         destroy,
         live,
     }
+}
+
+/// AWS names allow a narrow character set; an HCL address like
+/// `aws_instance.example` has to be flattened before it can be one.
+fn sanitize(component: &str) -> String {
+    component
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+pub fn key_pair_name(workspace: &str, address: &str) -> String {
+    format!("fleetform-{}-{}", sanitize(workspace), sanitize(address))
+}
+
+pub fn security_group_name(workspace: &str, address: &str) -> String {
+    format!("{}-sg", key_pair_name(workspace, address))
+}
+
+/// Where a managed key pair and security group are recorded in state. They are
+/// implied by an instance rather than declared in HCL, so they get a suffixed
+/// address instead of one of their own.
+pub fn key_pair_address(instance_address: &str) -> String {
+    format!("{}#key", instance_address)
+}
+
+pub fn security_group_address(instance_address: &str) -> String {
+    format!("{}#sg", instance_address)
+}
+
+pub fn cidr_from_public_ip(raw: &str) -> Result<String> {
+    let ip = raw.trim();
+    let octets: Vec<&str> = ip.split('.').collect();
+    let valid = octets.len() == 4
+        && octets
+            .iter()
+            .all(|o| !o.is_empty() && o.parse::<u8>().is_ok());
+    if !valid {
+        return Err(anyhow!("expected an IPv4 address, got {:?}", ip));
+    }
+    Ok(format!("{}/32", ip))
+}
+
+async fn detect_public_ip() -> Result<String> {
+    let body = reqwest::Client::new()
+        .get("https://checkip.amazonaws.com")
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await?
+        .text()
+        .await?;
+    cidr_from_public_ip(&body)
+}
+
+/// SSH ingress for a managed security group. Defaults to just this machine so
+/// a fresh apply is reachable by whoever ran it without putting port 22 on the
+/// public internet. `ssh_cidr` on the resource overrides it.
+pub async fn resolve_ssh_cidr(configured: Option<&str>) -> Result<String> {
+    if let Some(cidr) = configured {
+        let cidr = cidr.trim();
+        if !cidr.contains('/') {
+            return Err(anyhow!(
+                "ssh_cidr must include a prefix length, e.g. \"{}/32\"",
+                cidr
+            ));
+        }
+        if cidr == "0.0.0.0/0" {
+            terminal::warn("ssh_cidr is 0.0.0.0/0: port 22 will be open to the internet.");
+        }
+        return Ok(cidr.to_string());
+    }
+    let cidr = detect_public_ip().await.map_err(|e| {
+        anyhow!(
+            "could not detect this machine's public IP to scope SSH access ({}). \
+             Set ssh_cidr on the resource, e.g. ssh_cidr = \"203.0.113.4/32\", \
+             or \"0.0.0.0/0\" to allow the internet.",
+            e
+        )
+    })?;
+    terminal::info(&format!("Scoping SSH to this machine: {}", cidr));
+    Ok(cidr)
+}
+
+fn write_private_key(key_name: &str, material: &str) -> Result<std::path::PathBuf> {
+    let dir = std::path::Path::new(".fleetform").join("keys");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}.pem", key_name));
+    std::fs::write(&path, material)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // ssh refuses to use a key that other local users can read.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(path)
 }
 
 /// Cloud ids that make a non-live destroy unsafe. Clearing local state while
@@ -269,6 +377,13 @@ impl Engine {
             .unwrap_or_else(|| "t3.micro".into());
         let ami = resolve_ami(self.ec2()?, block.attributes.get("ami").map(|s| s.as_str())).await?;
 
+        let key_name = self.ensure_key_pair(&address, state).await?;
+        let ssh_cidr =
+            resolve_ssh_cidr(block.attributes.get("ssh_cidr").map(|s| s.as_str())).await?;
+        let security_group = self
+            .ensure_security_group(&address, &ssh_cidr, state)
+            .await?;
+
         terminal::info(&format!(
             "Launching {} ami={} type={}",
             address, ami, instance_type
@@ -298,6 +413,8 @@ impl Engine {
             .instance_type(instance_type.as_str().into())
             .min_count(1)
             .max_count(1)
+            .key_name(&key_name)
+            .security_group_ids(&security_group)
             .client_token(&client_token(&address))
             .tag_specifications(tags)
             .send()
@@ -321,6 +438,186 @@ impl Engine {
         ));
         upsert(state, live);
         Ok(())
+    }
+
+    /// Create (or adopt) the SSH key pair for an instance. The private key is
+    /// only ever returned by CreateKeyPair, so it is written to disk here or
+    /// it is gone for good.
+    async fn ensure_key_pair(&self, address: &str, state: &mut State) -> Result<String> {
+        let key_name = key_pair_name(&workspace_name(), address);
+        let record = |state: &mut State| {
+            upsert(
+                state,
+                ManagedResource {
+                    address: key_pair_address(address),
+                    resource_type: "aws_key_pair".into(),
+                    name: key_name.clone(),
+                    id: Some(key_name.clone()),
+                    status: "available".into(),
+                    public_ip: None,
+                },
+            );
+        };
+
+        if self
+            .ec2()?
+            .describe_key_pairs()
+            .key_names(&key_name)
+            .send()
+            .await
+            .is_ok()
+        {
+            let pem = std::path::Path::new(".fleetform")
+                .join("keys")
+                .join(format!("{}.pem", key_name));
+            if !pem.exists() {
+                terminal::warn(&format!(
+                    "Key pair {} exists in AWS but {} is missing locally. AWS only \
+                     hands out the private key once, so SSH will not work until you \
+                     delete the key pair and re-apply.",
+                    key_name,
+                    pem.display()
+                ));
+            }
+            terminal::info(&format!("Reusing key pair {}", key_name));
+            record(state);
+            return Ok(key_name);
+        }
+
+        let resp = self
+            .ec2()?
+            .create_key_pair()
+            .key_name(&key_name)
+            .tag_specifications(
+                TagSpecification::builder()
+                    .resource_type(ResourceType::KeyPair)
+                    .tags(Tag::builder().key("Name").value(&key_name).build())
+                    .tags(Tag::builder().key("ManagedBy").value("fleetform").build())
+                    .tags(
+                        Tag::builder()
+                            .key("fleetform:address")
+                            .value(address)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .send()
+            .await
+            .map_err(|e| anyhow!("CreateKeyPair failed: {}", e))?;
+
+        let material = resp
+            .key_material()
+            .ok_or_else(|| anyhow!("CreateKeyPair returned no private key material"))?;
+        let path = write_private_key(&key_name, material)?;
+        terminal::success(&format!(
+            "Key pair {} created. Private key: {}",
+            key_name,
+            path.display()
+        ));
+        record(state);
+        Ok(key_name)
+    }
+
+    /// Create (or adopt) the security group for an instance, allowing SSH from
+    /// `ssh_cidr` only.
+    async fn ensure_security_group(
+        &self,
+        address: &str,
+        ssh_cidr: &str,
+        state: &mut State,
+    ) -> Result<String> {
+        let group_name = security_group_name(&workspace_name(), address);
+        let record = |state: &mut State, id: &str| {
+            upsert(
+                state,
+                ManagedResource {
+                    address: security_group_address(address),
+                    resource_type: "aws_security_group".into(),
+                    name: group_name.clone(),
+                    id: Some(id.to_string()),
+                    status: "available".into(),
+                    public_ip: None,
+                },
+            );
+        };
+
+        let existing = self
+            .ec2()?
+            .describe_security_groups()
+            .filters(
+                Filter::builder()
+                    .name("group-name")
+                    .values(&group_name)
+                    .build(),
+            )
+            .send()
+            .await
+            .ok()
+            .and_then(|r| {
+                r.security_groups()
+                    .first()
+                    .and_then(|g| g.group_id().map(|s| s.to_string()))
+            });
+
+        if let Some(id) = existing {
+            terminal::info(&format!("Reusing security group {} ({})", group_name, id));
+            record(state, &id);
+            return Ok(id);
+        }
+
+        let resp = self
+            .ec2()?
+            .create_security_group()
+            .group_name(&group_name)
+            .description(format!("fleetform SSH access for {}", address))
+            .tag_specifications(
+                TagSpecification::builder()
+                    .resource_type(ResourceType::SecurityGroup)
+                    .tags(Tag::builder().key("Name").value(&group_name).build())
+                    .tags(Tag::builder().key("ManagedBy").value("fleetform").build())
+                    .tags(
+                        Tag::builder()
+                            .key("fleetform:address")
+                            .value(address)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .send()
+            .await
+            .map_err(|e| anyhow!("CreateSecurityGroup failed: {}", e))?;
+
+        let id = resp
+            .group_id()
+            .ok_or_else(|| anyhow!("CreateSecurityGroup returned no group id"))?
+            .to_string();
+
+        self.ec2()?
+            .authorize_security_group_ingress()
+            .group_id(&id)
+            .ip_permissions(
+                IpPermission::builder()
+                    .ip_protocol("tcp")
+                    .from_port(22)
+                    .to_port(22)
+                    .ip_ranges(
+                        IpRange::builder()
+                            .cidr_ip(ssh_cidr)
+                            .description("fleetform ssh")
+                            .build(),
+                    )
+                    .build(),
+            )
+            .send()
+            .await
+            .map_err(|e| anyhow!("AuthorizeSecurityGroupIngress failed: {}", e))?;
+
+        terminal::success(&format!(
+            "Security group {} ({}) allows SSH from {}",
+            group_name, id, ssh_cidr
+        ));
+        record(state, &id);
+        Ok(id)
     }
 
     async fn describe(&self, id: &str) -> Result<Option<ManagedResource>> {
@@ -394,39 +691,96 @@ impl Engine {
             state.resources.clear();
             return Ok(());
         }
-        let ids: Vec<String> = state
-            .managed
-            .iter()
-            .filter(|r| r.resource_type == "aws_instance")
-            .filter_map(|r| r.id.clone())
-            .collect();
-        if ids.is_empty() {
-            terminal::info("No instance ids in state.");
+        let ids = self.recorded_ids(state, "aws_instance");
+        let group_ids = self.recorded_ids(state, "aws_security_group");
+        let key_names = self.recorded_ids(state, "aws_key_pair");
+
+        if ids.is_empty() && group_ids.is_empty() && key_names.is_empty() {
+            terminal::info("No cloud ids in state.");
             state.managed.clear();
             state.resources.clear();
             return Ok(());
         }
-        terminal::warn(&format!("Terminating {:?}", ids));
-        self.ec2()?
-            .terminate_instances()
-            .set_instance_ids(Some(ids.clone()))
-            .send()
-            .await
-            .map_err(|e| anyhow!("TerminateInstances failed: {}", e))?;
-        for id in &ids {
-            for _ in 0..60 {
-                if let Some(live) = self.describe(id).await? {
-                    if live.status == "terminated" {
-                        break;
+
+        if !ids.is_empty() {
+            terminal::warn(&format!("Terminating {:?}", ids));
+            self.ec2()?
+                .terminate_instances()
+                .set_instance_ids(Some(ids.clone()))
+                .send()
+                .await
+                .map_err(|e| anyhow!("TerminateInstances failed: {}", e))?;
+            for id in &ids {
+                for _ in 0..60 {
+                    if let Some(live) = self.describe(id).await? {
+                        if live.status == "terminated" {
+                            break;
+                        }
+                        terminal::info(&format!("  {} is {}", id, live.status));
                     }
-                    terminal::info(&format!("  {} is {}", id, live.status));
+                    tokio::time::sleep(Duration::from_secs(5)).await;
                 }
-                tokio::time::sleep(Duration::from_secs(5)).await;
             }
         }
+
+        for group_id in &group_ids {
+            self.delete_security_group(group_id).await?;
+        }
+        for key_name in &key_names {
+            self.ec2()?
+                .delete_key_pair()
+                .key_name(key_name)
+                .send()
+                .await
+                .map_err(|e| anyhow!("DeleteKeyPair failed for {}: {}", key_name, e))?;
+            terminal::success(&format!("Deleted key pair {}", key_name));
+        }
+
         state.managed.clear();
         state.resources.clear();
         Ok(())
+    }
+
+    fn recorded_ids(&self, state: &State, resource_type: &str) -> Vec<String> {
+        state
+            .managed
+            .iter()
+            .filter(|r| r.resource_type == resource_type)
+            .filter_map(|r| r.id.clone())
+            .collect()
+    }
+
+    /// A security group cannot be deleted while a terminating instance's network
+    /// interface still references it, and that reference outlives the
+    /// `terminated` state by a few seconds.
+    async fn delete_security_group(&self, group_id: &str) -> Result<()> {
+        let mut last_err = None;
+        for _ in 0..12 {
+            match self
+                .ec2()?
+                .delete_security_group()
+                .group_id(group_id)
+                .send()
+                .await
+            {
+                Ok(_) => {
+                    terminal::success(&format!("Deleted security group {}", group_id));
+                    return Ok(());
+                }
+                Err(e) => {
+                    terminal::info(&format!("  {} still in use, retrying", group_id));
+                    last_err = Some(e);
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            }
+        }
+        Err(anyhow!(
+            "DeleteSecurityGroup failed for {}: {}",
+            group_id,
+            last_err
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "unknown error".into())
+        ))
     }
 }
 
@@ -615,6 +969,60 @@ mod tests {
             managed("aws_instance.example", Some("i-abc"), "running"),
         );
         assert!(blocking_cloud_ids(true, &state).is_empty());
+    }
+
+    #[test]
+    fn resource_names_are_aws_safe_and_stable() {
+        let key = key_pair_name("default", "aws_instance.example");
+        assert_eq!(key, "fleetform-default-aws-instance-example");
+        assert_eq!(key, key_pair_name("default", "aws_instance.example"));
+        assert_eq!(
+            security_group_name("default", "aws_instance.example"),
+            "fleetform-default-aws-instance-example-sg"
+        );
+        assert!(key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+    }
+
+    #[test]
+    fn implied_resources_get_their_own_state_addresses() {
+        assert_eq!(key_pair_address("aws_instance.web"), "aws_instance.web#key");
+        assert_eq!(
+            security_group_address("aws_instance.web"),
+            "aws_instance.web#sg"
+        );
+    }
+
+    #[test]
+    fn public_ip_becomes_a_single_host_cidr() {
+        assert_eq!(
+            cidr_from_public_ip("203.0.113.4\n").unwrap(),
+            "203.0.113.4/32"
+        );
+        assert!(cidr_from_public_ip("not-an-ip").is_err());
+        assert!(cidr_from_public_ip("203.0.113").is_err());
+        assert!(cidr_from_public_ip("999.0.113.4").is_err());
+        assert!(cidr_from_public_ip("").is_err());
+    }
+
+    #[tokio::test]
+    async fn configured_ssh_cidr_is_used_verbatim_and_must_have_a_prefix() {
+        assert_eq!(
+            resolve_ssh_cidr(Some("10.0.0.0/8")).await.unwrap(),
+            "10.0.0.0/8"
+        );
+        // No network call happens on this path, so a bad value fails fast.
+        assert!(resolve_ssh_cidr(Some("10.0.0.1")).await.is_err());
+    }
+
+    #[test]
+    fn instance_plan_announces_the_implied_resources() {
+        let plan = build_plan(&[inst("example")], &State::new());
+        assert!(
+            plan.changes[0].note.contains("key pair")
+                && plan.changes[0].note.contains("security group"),
+            "plan must disclose implied resources, got {:?}",
+            plan.changes[0].note
+        );
     }
 
     #[test]
