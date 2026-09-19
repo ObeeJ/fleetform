@@ -1,12 +1,10 @@
 # Rust
 target/
-Cargo.lock
 
 # Go
 fiber/fiber
-fiber/go.sum
 
-# Environment
+# Environment and local state
 .env
 .fleetform/
 
@@ -20,9 +18,8 @@ fiber/go.sum
 .DS_Store
 Thumbs.db
 
-# Logs
+# Logs and runtime artifacts
 *.log
-
-# Temporary files
 *.tmp
 *.temp
+dump.rdb

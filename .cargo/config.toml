@@ -2,8 +2,10 @@
 rustflags = ["-C", "target-feature=+crt-static"]
 linker = "rust-lld"
 
-[build]
-target = "x86_64-pc-windows-msvc"
+# Do not pin a default target here. A forced Windows MSVC target
+# breaks Linux, macOS, Docker, and GitHub Actions runners.
+# Cross-compile Windows from those hosts with:
+#   cargo build --release --target x86_64-pc-windows-msvc
 
 [profile.release]
 lto = true
