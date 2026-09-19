@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use aws_sdk_ec2::types::{Filter, InstanceStateName, Tag, TagSpecification, ResourceType};
+use aws_sdk_ec2::types::{Filter, ResourceType, Tag, TagSpecification};
 use aws_sdk_ec2::Client as Ec2Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -50,41 +50,60 @@ pub fn live_enabled() -> bool {
     )
 }
 
+pub fn workspace_name() -> String {
+    std::env::var("FLEETFORM_WORKSPACE").unwrap_or_else(|_| "default".into())
+}
+
 pub fn load_desired() -> Result<Vec<Block>> {
-    let path = if std::path::Path::new("main.tf").exists() {
-        "main.tf"
-    } else {
+    let path = std::path::Path::new("main.tf");
+    if !path.exists() {
         return Err(anyhow!("No main.tf in the working directory"));
-    };
+    }
     let contents = std::fs::read_to_string(path)?;
     crate::hcl::validate_hcl_syntax(&contents)?;
     parse_blocks(&contents)
+}
+
+fn address_of(block: &Block) -> Option<String> {
+    if block.block_type == "resource" && block.labels.len() == 2 {
+        Some(format!("{}.{}", block.labels[0], block.labels[1]))
+    } else {
+        None
+    }
+}
+
+fn find_managed<'a>(state: &'a State, address: &str) -> Option<&'a ManagedResource> {
+    state.managed.iter().find(|r| r.address == address)
 }
 
 pub fn build_plan(desired: &[Block], state: &State) -> Plan {
     let live = live_enabled();
     let mut changes = Vec::new();
     for block in desired {
-        if block.block_type != "resource" || block.labels.len() != 2 {
+        let Some(address) = address_of(block) else {
             continue;
-        }
+        };
         let resource_type = block.labels[0].clone();
         let name = block.labels[1].clone();
-        let address = format!("{}.{}", resource_type, name);
-        let existing = state.managed.iter().find(|r| r.address == address);
+        let existing = find_managed(state, &address);
         let (action, note) = match existing {
             Some(r) if r.status == "running" || r.status == "available" => {
-                (Action::NoOp, format!("already {}", r.status))
+                (Action::NoOp, format!("already {} ({})", r.status, r.id.clone().unwrap_or_default()))
             }
             Some(r) if r.id.is_some() => (
                 Action::Create,
-                format!("prior id {} is not running; will recreate if live", r.id.clone().unwrap_or_default()),
+                format!(
+                    "prior id {} is {}; will recreate if live",
+                    r.id.clone().unwrap_or_default(),
+                    r.status
+                ),
             ),
-            _ => (Action::Create, "will be created".to_string()),
+            Some(r) if r.status == "planned" => (Action::Create, "recorded locally; not yet in AWS".into()),
+            _ => (Action::Create, "will be created".into()),
         };
         changes.push(PlannedChange {
             address,
-            resource_type: resource_type.clone(),
+            resource_type,
             name,
             action,
             ami: block.attributes.get("ami").cloned(),
@@ -94,32 +113,43 @@ pub fn build_plan(desired: &[Block], state: &State) -> Plan {
         });
     }
     let add = changes.iter().filter(|c| c.action == Action::Create).count();
+    let change = changes.iter().filter(|c| c.action == Action::NoOp).count();
     Plan {
         changes,
         add,
-        change: 0,
+        change,
         destroy: 0,
         live,
     }
 }
 
 pub struct Engine {
-    ec2: Ec2Client,
+    ec2: Option<Ec2Client>,
 }
 
 impl Engine {
-    pub async fn new() -> Self {
+    pub async fn connect() -> Result<Self> {
         let cfg = aws_config::defaults(aws_config::BehaviorVersion::latest())
             .load()
             .await;
-        Self {
-            ec2: Ec2Client::new(&cfg),
-        }
+        Ok(Self {
+            ec2: Some(Ec2Client::new(&cfg)),
+        })
+    }
+
+    pub fn dry() -> Self {
+        Self { ec2: None }
+    }
+
+    fn ec2(&self) -> Result<&Ec2Client> {
+        self.ec2
+            .as_ref()
+            .ok_or_else(|| anyhow!("AWS client not initialized"))
     }
 
     pub async fn apply_plan(&self, plan: &Plan, desired: &[Block], state: &mut State) -> Result<()> {
         if !plan.live {
-            terminal::warn("FLEETFORM_LIVE is not set. Plan recorded; no cloud writes.");
+            terminal::warn("FLEETFORM_LIVE is not set. Recording planned resources only.");
             terminal::warn("Export FLEETFORM_LIVE=1 to launch a real machine.");
             for change in &plan.changes {
                 if change.action == Action::Create {
@@ -143,12 +173,7 @@ impl Engine {
             if change.action != Action::Create {
                 continue;
             }
-            let block = desired.iter().find(|b| {
-                b.block_type == "resource"
-                    && b.labels.len() == 2
-                    && format!("{}.{}", b.labels[0], b.labels[1]) == change.address
-            });
-            let Some(block) = block else {
+            let Some(block) = desired.iter().find(|b| address_of(b).as_deref() == Some(change.address.as_str())) else {
                 continue;
             };
             match change.resource_type.as_str() {
@@ -158,6 +183,17 @@ impl Engine {
                         "S3 create for {} skipped in Phase 1. EC2 is the launch path.",
                         change.address
                     ));
+                    upsert(
+                        state,
+                        ManagedResource {
+                            address: change.address.clone(),
+                            resource_type: change.resource_type.clone(),
+                            name: change.name.clone(),
+                            id: None,
+                            status: "skipped".into(),
+                            public_ip: None,
+                        },
+                    );
                 }
                 other => terminal::warn(&format!("unsupported resource type: {}", other)),
             }
@@ -166,10 +202,15 @@ impl Engine {
     }
 
     async fn apply_instance(&self, block: &Block, state: &mut State) -> Result<()> {
-        let address = format!("{}.{}", block.labels[0], block.labels[1]);
-        if let Some(existing) = state.managed.iter().find(|r| r.address == address && r.id.is_some()) {
-            if let Some(id) = &existing.id {
-                if let Some(live) = self.describe(id).await? {
+        let address = address_of(block).ok_or_else(|| anyhow!("invalid instance block"))?;
+        let name = block.labels[1].clone();
+
+        if let Some(existing) = find_managed(state, &address) {
+            if let Some(id) = existing.id.clone() {
+                if let Some(mut live) = self.describe(&id).await? {
+                    live.address = address.clone();
+                    live.name = name.clone();
+                    live.resource_type = "aws_instance".into();
                     if live.status == "running" {
                         terminal::success(&format!(
                             "{} already running as {} {}",
@@ -189,7 +230,7 @@ impl Engine {
             .get("instance_type")
             .cloned()
             .unwrap_or_else(|| "t3.micro".into());
-        let ami = resolve_ami(&self.ec2, block.attributes.get("ami").map(|s| s.as_str())).await?;
+        let ami = resolve_ami(self.ec2()?, block.attributes.get("ami").map(|s| s.as_str())).await?;
 
         terminal::info(&format!(
             "Launching {} ami={} type={}",
@@ -198,18 +239,29 @@ impl Engine {
 
         let tags = TagSpecification::builder()
             .resource_type(ResourceType::Instance)
-            .tags(Tag::builder().key("Name").value(format!("fleetform-{}", block.labels[1])).build())
+            .tags(
+                Tag::builder()
+                    .key("Name")
+                    .value(format!("fleetform-{}", name))
+                    .build(),
+            )
             .tags(Tag::builder().key("ManagedBy").value("fleetform").build())
+            .tags(
+                Tag::builder()
+                    .key("fleetform:address")
+                    .value(&address)
+                    .build(),
+            )
             .build();
 
         let result = self
-            .ec2
+            .ec2()?
             .run_instances()
             .image_id(&ami)
             .instance_type(instance_type.as_str().into())
             .min_count(1)
             .max_count(1)
-            .client_token(&format!("fleetform-{}", block.labels[1]))
+            .client_token(&client_token(&address))
             .tag_specifications(tags)
             .send()
             .await
@@ -223,7 +275,7 @@ impl Engine {
             .to_string();
 
         terminal::info(&format!("Waiting for {} to reach running...", id));
-        let live = self.wait_running(&id).await?;
+        let live = self.wait_running(&address, &name, &id).await?;
         terminal::success(&format!(
             "Machine running: {} id={} ip={}",
             address,
@@ -235,9 +287,9 @@ impl Engine {
     }
 
     async fn describe(&self, id: &str) -> Result<Option<ManagedResource>> {
-        let resp = self.ec2.describe_instances().instance_ids(id).send().await;
-        let Ok(resp) = resp else {
-            return Ok(None);
+        let resp = match self.ec2()?.describe_instances().instance_ids(id).send().await {
+            Ok(r) => r,
+            Err(_) => return Ok(None),
         };
         for res in resp.reservations() {
             for inst in res.instances() {
@@ -259,16 +311,14 @@ impl Engine {
         Ok(None)
     }
 
-    async fn wait_running(&self, id: &str) -> Result<ManagedResource> {
+    async fn wait_running(&self, address: &str, name: &str, id: &str) -> Result<ManagedResource> {
         for _ in 0..60 {
-            if let Some(mut live) = self.describe(id).await? {
-                if live.status == InstanceStateName::Running.as_str() {
-                    live.address = format!("aws_instance.{}", live.name);
-                    live.resource_type = "aws_instance".into();
+            if let Some(live) = self.describe(id).await? {
+                if live.status == "running" {
                     return Ok(ManagedResource {
-                        address: format!("aws_instance.{}", id),
+                        address: address.to_string(),
                         resource_type: "aws_instance".into(),
-                        name: id.to_string(),
+                        name: name.to_string(),
                         id: Some(id.to_string()),
                         status: "running".into(),
                         public_ip: live.public_ip,
@@ -304,18 +354,19 @@ impl Engine {
             return Ok(());
         }
         terminal::warn(&format!("Terminating {:?}", ids));
-        self.ec2
+        self.ec2()?
             .terminate_instances()
             .set_instance_ids(Some(ids.clone()))
             .send()
             .await
             .map_err(|e| anyhow!("TerminateInstances failed: {}", e))?;
-        for id in ids {
+        for id in &ids {
             for _ in 0..60 {
-                if let Some(live) = self.describe(&id).await? {
+                if let Some(live) = self.describe(id).await? {
                     if live.status == "terminated" {
                         break;
                     }
+                    terminal::info(&format!("  {} is {}", id, live.status));
                 }
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
@@ -326,21 +377,24 @@ impl Engine {
     }
 }
 
-fn upsert(state: &mut State, mut rec: ManagedResource) {
-    if rec.address.is_empty() {
-        if let Some(id) = &rec.id {
-            rec.address = format!("aws_instance.{}", id);
-        }
-    }
-    if let Some(existing) = state.managed.iter_mut().find(|r| r.address == rec.address || r.id == rec.id) {
+fn upsert(state: &mut State, rec: ManagedResource) {
+    if let Some(existing) = state
+        .managed
+        .iter_mut()
+        .find(|r| r.address == rec.address || (rec.id.is_some() && r.id == rec.id))
+    {
         *existing = rec.clone();
     } else {
         state.managed.push(rec.clone());
     }
-    let label = rec.address.clone();
-    if !state.resources.iter().any(|r| r == &label) {
-        state.resources.push(label);
+    if !rec.address.is_empty() && !state.resources.iter().any(|r| r == &rec.address) {
+        state.resources.push(rec.address);
     }
+}
+
+fn client_token(address: &str) -> String {
+    let raw = format!("ff-{}-{}", workspace_name(), address.replace('.', "-"));
+    raw.chars().take(64).collect()
 }
 
 async fn resolve_ami(ec2: &Ec2Client, configured: Option<&str>) -> Result<String> {
@@ -369,9 +423,96 @@ async fn resolve_ami(ec2: &Ec2Client, configured: Option<&str>) -> Result<String
         .await
         .map_err(|e| anyhow!("DescribeImages failed: {}", e))?;
     let mut imgs: Vec<_> = images.images().iter().collect();
-    imgs.sort_by(|a, b| b.creation_date().unwrap_or("").cmp(a.creation_date().unwrap_or("")));
+    imgs.sort_by(|a, b| {
+        b.creation_date()
+            .unwrap_or("")
+            .cmp(a.creation_date().unwrap_or(""))
+    });
     imgs.first()
         .and_then(|i| i.image_id())
         .map(|s| s.to_string())
         .ok_or_else(|| anyhow!("Could not resolve an Amazon Linux AMI. Set FLEETFORM_AMI."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn inst(name: &str) -> Block {
+        let mut attributes = HashMap::new();
+        attributes.insert("ami".into(), "ami-12345678".into());
+        attributes.insert("instance_type".into(), "t3.micro".into());
+        Block {
+            block_type: "resource".into(),
+            labels: vec!["aws_instance".into(), name.into()],
+            attributes,
+            blocks: vec![],
+        }
+    }
+
+    #[test]
+    fn plan_creates_when_state_empty() {
+        let plan = build_plan(&[inst("example")], &State::new());
+        assert_eq!(plan.add, 1);
+        assert_eq!(plan.changes[0].address, "aws_instance.example");
+        assert_eq!(plan.changes[0].action, Action::Create);
+    }
+
+    #[test]
+    fn plan_is_noop_when_instance_running() {
+        let mut state = State::new();
+        upsert(
+            &mut state,
+            ManagedResource {
+                address: "aws_instance.example".into(),
+                resource_type: "aws_instance".into(),
+                name: "example".into(),
+                id: Some("i-abc".into()),
+                status: "running".into(),
+                public_ip: Some("1.2.3.4".into()),
+            },
+        );
+        let plan = build_plan(&[inst("example")], &state);
+        assert_eq!(plan.add, 0);
+        assert_eq!(plan.changes[0].action, Action::NoOp);
+    }
+
+    #[test]
+    fn upsert_keeps_hcl_address() {
+        let mut state = State::new();
+        upsert(
+            &mut state,
+            ManagedResource {
+                address: "aws_instance.example".into(),
+                resource_type: "aws_instance".into(),
+                name: "example".into(),
+                id: Some("i-1".into()),
+                status: "running".into(),
+                public_ip: None,
+            },
+        );
+        upsert(
+            &mut state,
+            ManagedResource {
+                address: "aws_instance.example".into(),
+                resource_type: "aws_instance".into(),
+                name: "example".into(),
+                id: Some("i-1".into()),
+                status: "running".into(),
+                public_ip: Some("9.9.9.9".into()),
+            },
+        );
+        assert_eq!(state.managed.len(), 1);
+        assert_eq!(state.managed[0].address, "aws_instance.example");
+        assert_eq!(state.managed[0].public_ip.as_deref(), Some("9.9.9.9"));
+    }
+
+    #[test]
+    fn client_token_is_stable_and_bounded() {
+        let token = client_token("aws_instance.example");
+        assert!(token.starts_with("ff-"));
+        assert!(token.len() <= 64);
+        assert_eq!(token, client_token("aws_instance.example"));
+    }
 }

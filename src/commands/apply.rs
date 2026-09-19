@@ -5,30 +5,30 @@ pub async fn run() -> anyhow::Result<()> {
     run_with_approval(false).await
 }
 
-pub async fn run_with_approval(auto_approve: bool) -> anyhow::Result<()> {
+pub async fn run_with_approval(_auto_approve: bool) -> anyhow::Result<()> {
     terminal::info("Applying infrastructure...");
     let desired = engine::load_desired()?;
     let mut current = state::load().await?;
     let plan = engine::build_plan(&desired, &current);
 
     terminal::info(&format!(
-        "Plan: {} to add, {} to change, {} to destroy",
+        "Plan: {} to add, {} already present, {} to destroy",
         plan.add, plan.change, plan.destroy
     ));
-    if plan.is_empty() {
+    if plan.add == 0 && plan.destroy == 0 {
         terminal::success("Nothing to apply.");
         return Ok(());
     }
-    if !auto_approve && !engine::live_enabled() {
-        terminal::info("Dry apply (no FLEETFORM_LIVE). Recording planned resources only.");
-    }
 
-    let engine = engine::Engine::new().await;
+    let engine = if plan.live {
+        engine::Engine::connect().await?
+    } else {
+        engine::Engine::dry()
+    };
     engine.apply_plan(&plan, &desired, &mut current).await?;
     state::save(&current).await?;
 
-    if std::env::var("FLEETFORM_S3_BUCKET").is_ok() {
-        let bucket = std::env::var("FLEETFORM_S3_BUCKET").unwrap_or_else(|_| "fleetform-state".into());
+    if let Ok(bucket) = std::env::var("FLEETFORM_S3_BUCKET") {
         current.write_s3(&bucket, "fleetform.json").await?;
         terminal::info(&format!("State uploaded to s3://{}/fleetform.json", bucket));
     }
@@ -42,7 +42,7 @@ pub async fn run_with_approval(auto_approve: bool) -> anyhow::Result<()> {
         terminal::success(&format!("Apply complete. {} machine(s) running.", running));
     } else if engine::live_enabled() {
         return Err(anyhow::anyhow!(
-            "Apply finished without a running machine. Check AWS credentials, AMI, and subnet/VPC defaults."
+            "Apply finished without a running machine. Check AWS credentials, AMI, and default VPC."
         ));
     } else {
         terminal::success("Apply recorded locally. Not live.");
