@@ -1,54 +1,55 @@
-use crate::{config, state, terminal};
+use crate::{engine, state, terminal};
 use std::path::Path;
 
 pub async fn run() -> anyhow::Result<()> {
     run_with_approval(false).await
 }
 
-pub async fn run_with_approval(auto_approve: bool) -> anyhow::Result<()> {
+pub async fn run_with_approval(_auto_approve: bool) -> anyhow::Result<()> {
     terminal::info("Applying infrastructure...");
+    let desired = engine::load_desired()?;
+    let mut current = state::load().await?;
+    let plan = engine::build_plan(&desired, &current);
 
-    let config = config::load().await?;
-    let state_path = Path::new(".fleetform/state.json");
+    terminal::info(&format!(
+        "Plan: {} to add, {} already present, {} to destroy",
+        plan.add, plan.change, plan.destroy
+    ));
+    if plan.add == 0 && plan.destroy == 0 {
+        terminal::success("Nothing to apply.");
+        return Ok(());
+    }
 
-    let mut current_state = if state_path.exists() {
-        state::State::read(state_path)?
+    let engine = if plan.live {
+        engine::Engine::connect().await?
     } else {
-        state::State::new()
+        engine::Engine::dry()
     };
+    engine.apply_plan(&plan, &desired, &mut current).await?;
+    state::save(&current).await?;
 
-    if !auto_approve {
-        terminal::info("Do you want to perform these actions? (yes/no)");
-        terminal::info("Assuming 'yes' for demo");
+    if let Ok(bucket) = std::env::var("FLEETFORM_S3_BUCKET") {
+        current.write_s3(&bucket, "fleetform.json").await?;
+        terminal::info(&format!("State uploaded to s3://{}/fleetform.json", bucket));
     }
 
-    current_state.resources.push("applied-resource".to_string());
-    current_state.write(state_path)?;
-
-    // Use provisioner for actual resource creation
-    let provisioner = crate::provisioner::Provisioner::new().await;
-    provisioner
-        .provision_resources(&config, &mut current_state)
-        .await?;
-
-    // Use provider functions with Source struct
-    let client = reqwest::Client::new();
-    let provider_source = crate::provider::Source::new(client, config.clone());
-    provider_source
-        .apply_changes(&config, &mut current_state)
-        .await?;
-
-    // Also use standalone apply_changes function
-    crate::provider::apply_changes(&config, &mut current_state).await?;
-
-    // Write to S3 remote state (if configured)
-    if std::env::var("FLEETFORM_S3_BUCKET").is_ok() {
-        let bucket = std::env::var("FLEETFORM_S3_BUCKET").unwrap_or("fleetform-state".to_string());
-        let key = "fleetform.json";
-        current_state.write_s3(&bucket, key).await?;
-        terminal::info(&format!("State uploaded to s3://{}/{}", bucket, key));
+    let running = current
+        .managed
+        .iter()
+        .filter(|r| r.status == "running")
+        .count();
+    if running > 0 {
+        terminal::success(&format!("Apply complete. {} machine(s) running.", running));
+    } else if engine::live_enabled() {
+        return Err(anyhow::anyhow!(
+            "Apply finished without a running machine. Check AWS credentials, AMI, and default VPC."
+        ));
+    } else {
+        terminal::success("Apply recorded locally. Not live.");
     }
-
-    terminal::success("Apply complete!");
+    let _ = std::fs::write(
+        Path::new("fleetform_plan.json"),
+        serde_json::to_string_pretty(&plan)?,
+    );
     Ok(())
 }

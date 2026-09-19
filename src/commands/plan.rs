@@ -1,59 +1,33 @@
-use crate::{config, dag, state, terminal};
-use reqwest::Client;
+use crate::{engine, state, terminal};
 use std::path::Path;
 
 pub async fn run() -> anyhow::Result<()> {
-    terminal::info("Creating execution plan...");
+    terminal::info("Creating execution plan from main.tf...");
+    let desired = engine::load_desired()?;
+    let current = state::load().await?;
+    let plan = engine::build_plan(&desired, &current);
 
-    // Build resource dependency graph
-    let mut graph = dag::ResourceGraph::new();
-    graph.add_resource("aws_instance.example");
-    graph.add_resource("aws_s3_bucket.my_bucket");
-    graph.add_dependency("aws_instance.example", "aws_s3_bucket.my_bucket");
-
-    let ordered_resources = graph.get_ordered_resources();
     terminal::info(&format!(
-        "Resource graph built with {} resources",
-        graph.resource_count()
+        "Plan: {} to add, {} to change, {} to destroy",
+        plan.add, plan.change, plan.destroy
     ));
-    terminal::info(&format!("Ordered resources: {:?}", ordered_resources));
-
-    let _config = config::load().await?;
-    let state_path = Path::new(".fleetform/state.json");
-
-    let current_state = if state_path.exists() {
-        state::State::read(state_path)?
-    } else {
-        state::State::new()
-    };
-
-    let resource_count = current_state.resources.len();
-    terminal::info(&format!(
-        "Plan: 1 to add, {} to change, 0 to destroy",
-        resource_count
-    ));
-    terminal::info("+ resource \"new-resource\" will be created");
-
-    // Write plan data to file for Fiber UI
-    let plan_data = serde_json::json!({
-        "plan": ordered_resources,
-        "status": "Planning..."
-    });
-    std::fs::write("fleetform_plan.json", plan_data.to_string())?;
-
-    // Fetch UI data from Fiber endpoint
-    let client = Client::new();
-    match client.get("http://localhost:3001/ui").send().await {
-        Ok(response) => {
-            if let Ok(json) = response.json::<serde_json::Value>().await {
-                terminal::info(&format!("Plan UI: {}", json));
-            }
-        }
-        Err(e) => {
-            terminal::error(&format!("Failed to connect to Plan UI server: {}", e));
-            terminal::warn("Could not connect to Plan UI server");
-        }
+    if !plan.live {
+        terminal::warn("Dry plan. Set FLEETFORM_LIVE=1 before apply to launch a real machine.");
+    }
+    for change in &plan.changes {
+        let mark = match change.action {
+            engine::Action::Create => "+",
+            engine::Action::Destroy => "-",
+            engine::Action::NoOp => "~",
+        };
+        terminal::info(&format!(
+            "{} {} ({})",
+            mark, change.address, change.note
+        ));
     }
 
+    let plan_path = Path::new("fleetform_plan.json");
+    std::fs::write(plan_path, serde_json::to_string_pretty(&plan)?)?;
+    terminal::success(&format!("Plan written to {}", plan_path.display()));
     Ok(())
 }
