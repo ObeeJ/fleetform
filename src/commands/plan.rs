@@ -10,7 +10,7 @@ pub async fn run() -> anyhow::Result<()> {
     graph.add_resource("aws_instance.example");
     graph.add_resource("aws_s3_bucket.my_bucket");
     graph.add_dependency("aws_instance.example", "aws_s3_bucket.my_bucket");
-    
+
     let ordered_resources = graph.get_ordered_resources();
     terminal::info(&format!(
         "Resource graph built with {} resources",
@@ -40,7 +40,7 @@ pub async fn run() -> anyhow::Result<()> {
         "status": "Planning..."
     });
     std::fs::write("fleetform_plan.json", plan_data.to_string())?;
-    
+
     // Fetch UI data from Fiber endpoint
     let client = Client::new();
     match client.get("http://localhost:3001/ui").send().await {

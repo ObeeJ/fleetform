@@ -15,7 +15,7 @@ impl Config {
         let contents = std::fs::read_to_string(path)?;
         crate::hcl::validate_hcl_syntax(&contents)?;
         let resources = crate::hcl::parse_terraform_config(&contents)?;
-        Ok(Config { 
+        Ok(Config {
             provider: vec!["aws".to_string()],
             resource: resources.clone(),
             resources,
@@ -44,7 +44,7 @@ fn parse_hcl_basic(content: &str) -> anyhow::Result<Config> {
     // Basic HCL parsing using content
     let mut providers = Vec::new();
     let mut resources = Vec::new();
-    
+
     for line in content.lines() {
         if line.contains("provider") {
             providers.push("aws".to_string());
@@ -53,8 +53,12 @@ fn parse_hcl_basic(content: &str) -> anyhow::Result<Config> {
             resources.push("aws_instance".to_string());
         }
     }
-    
-    Ok(Config { provider: providers, resource: resources.clone(), resources })
+
+    Ok(Config {
+        provider: providers,
+        resource: resources.clone(),
+        resources,
+    })
 }
 
 pub async fn load() -> anyhow::Result<Config> {

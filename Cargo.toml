@@ -27,6 +27,9 @@ uuid = { version = "1.0", features = ["v4"] }
 futures-util = "0.3"
 shellwords = "1.1"
 
+[target.'cfg(not(windows))'.dependencies]
+signal-hook = "0.4"
+
 [build-dependencies]
 tonic-build = { version = "0.10", features = ["prost"] }
 prost-build = "0.12"

@@ -72,7 +72,8 @@ fn parse_block(content: &str) -> Result<Block, anyhow::Error> {
     let parts: Vec<_> = header.split_whitespace().collect();
 
     let block_type = parts[0].to_string();
-    let labels = parts[1..].iter()
+    let labels = parts[1..]
+        .iter()
         .map(|s| s.trim_matches('"').to_string())
         .collect();
 
@@ -90,7 +91,8 @@ fn parse_block(content: &str) -> Result<Block, anyhow::Error> {
         if line.contains('=') {
             let parts: Vec<_> = line.splitn(2, '=').collect();
             let key = parts[0].trim().to_string();
-            let value = parts[1].trim()
+            let value = parts[1]
+                .trim()
                 .trim_matches('"')
                 .trim_end_matches(',')
                 .to_string();
@@ -99,21 +101,21 @@ fn parse_block(content: &str) -> Result<Block, anyhow::Error> {
             // This might be a nested block
             let mut nested_content = String::new();
             let mut brace_count = 0;
-            
+
             while i < lines.len() {
                 let line = lines[i].trim();
                 nested_content.push_str(line);
                 nested_content.push('\n');
-                
+
                 brace_count += line.matches('{').count();
                 brace_count -= line.matches('}').count();
-                
+
                 if brace_count == 0 {
                     break;
                 }
                 i += 1;
             }
-            
+
             if !nested_content.is_empty() {
                 nested_blocks.push(parse_block(&nested_content)?);
             }
@@ -131,7 +133,7 @@ fn parse_block(content: &str) -> Result<Block, anyhow::Error> {
 
 pub fn extract_quoted_value(input: &str) -> Option<String> {
     if input.starts_with('"') && input.ends_with('"') {
-        Some(input[1..input.len()-1].to_string())
+        Some(input[1..input.len() - 1].to_string())
     } else {
         None
     }
@@ -165,7 +167,9 @@ pub fn validate_hcl_syntax(contents: &str) -> Result<(), anyhow::Error> {
         }
 
         if brace_count < 0 {
-            return Err(anyhow::anyhow!("Invalid HCL syntax: unexpected closing brace"));
+            return Err(anyhow::anyhow!(
+                "Invalid HCL syntax: unexpected closing brace"
+            ));
         }
 
         prev_char = Some(c);
