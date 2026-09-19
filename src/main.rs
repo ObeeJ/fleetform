@@ -1,11 +1,11 @@
 use clap::{Parser, Subcommand};
 
+use crate::commands::module::Command as ModuleCommand;
+use crate::commands::workspace::Command as WorkspaceCommand;
 #[cfg(not(windows))]
 use signal_hook::{consts::SIGINT, iterator::Signals};
 use std::process::Command;
 use std::{env, thread};
-use crate::commands::module::Command as ModuleCommand;
-use crate::commands::workspace::Command as WorkspaceCommand;
 
 mod commands;
 mod config;
@@ -13,8 +13,8 @@ mod dag;
 mod hcl;
 mod modules;
 mod proto;
-mod provisioner;
 mod provider;
+mod provisioner;
 mod registry;
 mod state;
 mod terminal;
@@ -110,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
             terminal::info("Fleetform - Infrastructure as Code CLI");
             terminal::info("Use --help for available commands");
             Ok(())
-        },
+        }
         Some(Commands::Init) => commands::init::run().await,
         Some(Commands::Validate) => commands::validate::run().await,
         Some(Commands::Plan) => commands::plan::run().await,
@@ -125,7 +125,7 @@ async fn main() -> anyhow::Result<()> {
             };
             cmd.run(meta).map_err(|e| anyhow::anyhow!(e.to_string()))?;
             Ok(())
-        },
+        }
         Some(Commands::Config) => commands::config::run().await,
         Some(Commands::Providers) => commands::providers::run().await,
         Some(Commands::StateMv) => commands::state_mv::run().await,
@@ -135,14 +135,16 @@ async fn main() -> anyhow::Result<()> {
                 working_dir: std::env::current_dir()?,
                 streams: commands::module::Streams,
             };
-            cmd.run(meta).await.map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            cmd.run(meta)
+                .await
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
             Ok(())
-        },
+        }
         Some(Commands::Consul) => commands::consul::run().await,
         Some(Commands::Provision) => commands::provision::run().await,
         Some(Commands::HclValidate) => commands::hcl_validate::run().await,
         Some(Commands::WorkspaceTest) => commands::workspace_test::run().await,
-        Some(Commands::ConsulTest) => commands::consul_test::run().await
+        Some(Commands::ConsulTest) => commands::consul_test::run().await,
     }
 }
 
@@ -163,14 +165,11 @@ fn start_ui_server() -> Result<(), anyhow::Error> {
 fn setup_signal_handling() {
     #[cfg(not(windows))]
     thread::spawn(|| {
-        let mut signals = Signals::new(&[SIGINT]).expect("Failed to register signal handler");
+        let mut signals = Signals::new([SIGINT]).expect("Failed to register signal handler");
         for sig in signals.forever() {
-            match sig {
-                SIGINT => {
-                    crate::terminal::warn("Received interrupt signal, shutting down gracefully...");
-                    std::process::exit(130);
-                }
-                _ => {}
+            if sig == SIGINT {
+                crate::terminal::warn("Received interrupt signal, shutting down gracefully...");
+                std::process::exit(130);
             }
         }
     });

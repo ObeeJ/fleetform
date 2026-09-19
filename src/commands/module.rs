@@ -1,4 +1,4 @@
-use crate::{registry::ModuleRegistry, modules::Module, terminal};
+use crate::{modules::Module, registry::ModuleRegistry, terminal};
 use std::error::Error;
 
 #[derive(clap::Parser)]
@@ -61,35 +61,38 @@ impl Command for ModuleCmd {
             ModuleSubCommand::Init { name } => {
                 let module_dir = modules_dir.join(name);
                 std::fs::create_dir_all(&module_dir)?;
-                
+
                 // Create main.tf
                 let main_tf = module_dir.join("main.tf");
                 std::fs::write(&main_tf, "# Main module configuration\n")?;
-                
+
                 // Create variables.tf
                 let vars_tf = module_dir.join("variables.tf");
                 std::fs::write(&vars_tf, "# Module variables\n")?;
-                
+
                 // Create outputs.tf
                 let outputs_tf = module_dir.join("outputs.tf");
                 std::fs::write(&outputs_tf, "# Module outputs\n")?;
-                
-                meta.streams.stdout(&format!("Initialized new module '{}'", name));
+
+                meta.streams
+                    .stdout(&format!("Initialized new module '{}'", name));
                 Ok(())
-            },
+            }
             ModuleSubCommand::Update { name: _ } => {
-                meta.streams.stdout("Module update functionality coming soon");
+                meta.streams
+                    .stdout("Module update functionality coming soon");
                 Ok(())
-            },
+            }
             ModuleSubCommand::Get { url } => {
                 registry.fetch_module(url).await?;
-                meta.streams.stdout(&format!("Successfully fetched module from {}", url));
+                meta.streams
+                    .stdout(&format!("Successfully fetched module from {}", url));
                 Ok(())
-            },
+            }
             ModuleSubCommand::List => {
                 let cached = registry.list_cached_modules()?;
                 let local = Module::list_modules(&modules_dir)?;
-                
+
                 meta.streams.stdout("Available modules:");
                 meta.streams.stdout("\nLocal modules:");
                 for module in local {
@@ -100,12 +103,13 @@ impl Command for ModuleCmd {
                     meta.streams.stdout(&format!("  {}", module));
                 }
                 Ok(())
-            },
+            }
             ModuleSubCommand::Validate { name } => {
                 let _module = Module::load(&modules_dir.join(name))?;
-                meta.streams.stdout(&format!("Module '{}' validation complete", name));
+                meta.streams
+                    .stdout(&format!("Module '{}' validation complete", name));
                 Ok(())
-            },
+            }
         }
     }
 }

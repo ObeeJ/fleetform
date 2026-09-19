@@ -1,6 +1,6 @@
 # Production image for the Fleetform CLI.
 # Uses current stable Rust so floating crates that require edition 2024 compile.
-FROM rust:bookworm AS builder
+FROM rust:1.94.1-bookworm AS builder
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
