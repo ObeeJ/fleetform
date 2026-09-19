@@ -96,10 +96,13 @@ pub fn build_plan(desired: &[Block], state: &State) -> Plan {
                     r.id.clone().unwrap_or_default()
                 ),
             ),
+            // plan never calls AWS, so it cannot know whether the recorded id
+            // still exists. Say what apply will actually do rather than
+            // promising a recreate it may not perform.
             Some(r) if r.id.is_some() => (
                 Action::Create,
                 format!(
-                    "prior id {} is {}; will recreate if live",
+                    "prior id {} recorded as {}; apply adopts it if it still exists, otherwise creates",
                     r.id.clone().unwrap_or_default(),
                     r.status
                 ),
@@ -236,6 +239,13 @@ pub async fn resolve_ssh_cidr(configured: Option<&str>) -> Result<String> {
     Ok(cidr)
 }
 
+/// Write state to disk now. Every cloud resource that exists has to be recorded
+/// before the next API call: a timeout, an error or Ctrl-C in between leaves a
+/// billed resource running with nothing on disk pointing at it.
+async fn persist(state: &State) -> Result<()> {
+    crate::state::save(state).await
+}
+
 fn write_private_key(key_name: &str, material: &str) -> Result<std::path::PathBuf> {
     let dir = std::path::Path::new(".fleetform").join("keys");
     std::fs::create_dir_all(&dir)?;
@@ -356,15 +366,50 @@ impl Engine {
                     live.address = address.clone();
                     live.name = name.clone();
                     live.resource_type = "aws_instance".into();
-                    if live.status == "running" {
-                        terminal::success(&format!(
-                            "{} already running as {} {}",
-                            address,
-                            id,
-                            live.public_ip.clone().unwrap_or_default()
-                        ));
-                        upsert(state, live);
-                        return Ok(());
+                    let status = live.status.clone();
+                    match status.as_str() {
+                        "running" => {
+                            terminal::success(&format!(
+                                "{} already running as {} {}",
+                                address,
+                                id,
+                                live.public_ip.clone().unwrap_or_default()
+                            ));
+                            upsert(state, live);
+                            persist(state).await?;
+                            return Ok(());
+                        }
+                        // Still booting from an earlier apply that did not get
+                        // to finish. Waiting is right; launching a second
+                        // machine is how the first one gets stranded.
+                        "pending" => {
+                            terminal::info(&format!(
+                                "{} is already {} as {}; waiting rather than launching another",
+                                address, status, id
+                            ));
+                            let live = self.wait_running(&address, &name, &id).await?;
+                            upsert(state, live);
+                            persist(state).await?;
+                            return Ok(());
+                        }
+                        // Genuinely gone, so creating a replacement is correct.
+                        "terminated" | "shutting-down" => {}
+                        // Stopped or stopping: still a billed machine that this
+                        // address owns. Launching another would leave it with
+                        // no record once upsert replaced its id.
+                        _ => {
+                            upsert(state, live);
+                            persist(state).await?;
+                            return Err(anyhow!(
+                                "{} is recorded as {}, which is {} in AWS. Refusing to launch \
+                                 a second machine for the same address - start or terminate \
+                                 {} first.",
+                                address,
+                                id,
+                                status,
+                                id
+                            ));
+                        }
                     }
                 }
             }
@@ -428,6 +473,22 @@ impl Engine {
             .ok_or_else(|| anyhow!("RunInstances returned no instance id"))?
             .to_string();
 
+        // RunInstances has already created a billed machine. Record it before
+        // waiting: wait_running can time out or fail, and until this is on disk
+        // the instance is running with nothing naming its id.
+        upsert(
+            state,
+            ManagedResource {
+                address: address.clone(),
+                resource_type: "aws_instance".into(),
+                name: name.clone(),
+                id: Some(id.clone()),
+                status: "pending".into(),
+                public_ip: None,
+            },
+        );
+        persist(state).await?;
+
         terminal::info(&format!("Waiting for {} to reach running...", id));
         let live = self.wait_running(&address, &name, &id).await?;
         terminal::success(&format!(
@@ -437,6 +498,7 @@ impl Engine {
             live.public_ip.clone().unwrap_or_else(|| "none".into())
         ));
         upsert(state, live);
+        persist(state).await?;
         Ok(())
     }
 
@@ -481,6 +543,7 @@ impl Engine {
             }
             terminal::info(&format!("Reusing key pair {}", key_name));
             record(state);
+            persist(state).await?;
             return Ok(key_name);
         }
 
@@ -515,6 +578,7 @@ impl Engine {
             path.display()
         ));
         record(state);
+        persist(state).await?;
         Ok(key_name)
     }
 
@@ -562,6 +626,7 @@ impl Engine {
         if let Some(id) = existing {
             terminal::info(&format!("Reusing security group {} ({})", group_name, id));
             record(state, &id);
+            persist(state).await?;
             return Ok(id);
         }
 
@@ -617,6 +682,7 @@ impl Engine {
             group_name, id, ssh_cidr
         ));
         record(state, &id);
+        persist(state).await?;
         Ok(id)
     }
 
@@ -969,6 +1035,35 @@ mod tests {
             managed("aws_instance.example", Some("i-abc"), "running"),
         );
         assert!(blocking_cloud_ids(true, &state).is_empty());
+    }
+
+    #[test]
+    fn a_pending_instance_still_blocks_a_non_live_destroy() {
+        // apply records the id with status "pending" before waiting. If that
+        // status escaped the destroy guard, the very record added to prevent
+        // orphans would be the one that let state be wiped.
+        let mut state = State::new();
+        upsert(
+            &mut state,
+            managed("aws_instance.example", Some("i-abc"), "pending"),
+        );
+        assert_eq!(blocking_cloud_ids(false, &state), vec!["i-abc".to_string()]);
+    }
+
+    #[test]
+    fn plan_does_not_promise_a_recreate_it_may_not_perform() {
+        let mut state = State::new();
+        upsert(
+            &mut state,
+            managed("aws_instance.example", Some("i-abc"), "pending"),
+        );
+        let note = &build_plan(&[inst("example")], &state).changes[0].note;
+        assert!(
+            note.contains("adopts it if it still exists"),
+            "plan is offline and cannot know the resource is gone, got {:?}",
+            note
+        );
+        assert!(!note.contains("will recreate"));
     }
 
     #[test]
