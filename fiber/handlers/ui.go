@@ -2,27 +2,30 @@ package handlers
 
 import (
 	"encoding/json"
+
 	"github.com/gofiber/fiber/v2"
-	"io/ioutil"
 )
 
 func UIHandler(c *fiber.Ctx) error {
-	// Try to read plan data from file first
-	data, err := ioutil.ReadFile("../fleetform_plan.json")
-	if err == nil {
-		var planData map[string]interface{}
-		if json.Unmarshal(data, &planData) == nil {
-			return c.JSON(planData)
-		}
+	data, path, err := readFirst(
+		"../fleetform_plan.json",
+		"fleetform_plan.json",
+		"/data/fleetform_plan.json",
+	)
+	if err != nil {
+		return c.JSON(fiber.Map{
+			"changes": []any{},
+			"add":     0,
+			"change":  0,
+			"destroy": 0,
+			"live":    false,
+			"note":    "no plan file yet; run fleetform plan",
+		})
 	}
-	
-	// Fallback to default data
-	defaultData := fiber.Map{
-		"plan": []string{
-			"Create: aws_instance.example",
-			"Update: aws_s3_bucket.my_bucket",
-		},
-		"status": "Planning...",
+	var planData map[string]interface{}
+	if json.Unmarshal(data, &planData) != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to parse plan", "path": path})
 	}
-	return c.JSON(defaultData)
+	planData["source"] = path
+	return c.JSON(planData)
 }
