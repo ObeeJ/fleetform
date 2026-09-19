@@ -1,119 +1,171 @@
-# Fleetform 
+<div align="center">
 
-Modern Infrastructure as Code tool built with **Rust + Go Fiber** that surpasses OpenTofu.
+# Fleetform
+
+**A Rust-powered Infrastructure as Code CLI with a real-time web dashboard.**
+
+[![CI](https://github.com/ObeeJ/fleetform/actions/workflows/checks.yml/badge.svg)](https://github.com/ObeeJ/fleetform/actions/workflows/checks.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+</div>
+
+Fleetform is a Terraform/OpenTofu-style Infrastructure as Code tool. A Rust CLI core handles configuration parsing, dependency resolution, planning, and applying changes, while a companion Go (Fiber) web server exposes a live dashboard for visualizing plans, diffs, and modules over WebSocket.
 
 ## Features
 
-- **Memory-Safe**: Rust core with zero memory leaks  
-- **High Performance**: Compiled binaries faster than Go runtime  
-- **Modern UI**: Real-time web dashboard with WebSocket updates  
-- **Dependency Graphs**: Visual resource relationship mapping  
-- **Module System**: Reusable configuration components  
-- **Multi-Backend**: File, S3, Consul state management  
-- **Testing Framework**: Infrastructure validation  
-- **Cross-Platform**: Windows, Linux, macOS support  
+- **HCL-based configuration** — define providers, resources, and modules using familiar HCL syntax, parsed with `hcl-rs`
+- **Dependency graph engine** — resources are modeled as a DAG (via `petgraph`) and topologically ordered; wiring the planner to build this graph from parsed configuration (rather than the current fixed example graph) is in progress
+- **Real-time web dashboard** — a Go Fiber server serves plan data, state, module listings, and diffs, with live updates pushed over WebSocket
+- **Workspaces** — create, select, list, and switch between isolated named workspaces
+- **Module system** — fetch and cache reusable configuration modules from a registry
+- **Pluggable state backends** — local file, AWS S3, and Consul, with file locking and automatic retries for safe concurrent access
+- **OpenTofu provider protocol (in progress)** — vendors the `tfplugin6` protobuf/gRPC definitions (via `tonic`/`prost`) as the basis for provider communication; the provider client is currently a placeholder and does not yet perform real provider RPCs
+- **Infrastructure testing** — run validation checks against your configuration before applying
+- **Cross-platform** — builds and runs on Linux, macOS, and Windows
 
-##  Quick Start
+## Architecture
+
+```
+┌───────────────────────┐        ┌─────────────────────────┐        ┌───────────────────────────┐
+│      CLI (Rust)        │        │   Web Dashboard (Go)     │        │   State Backends           │
+│  • clap-based commands │ <----> │  • Fiber HTTP + WebSocket│ <----> │  • Local file (fs4 locking) │
+│  • HCL config parsing  │        │  • Plan / diff / module  │        │  • AWS S3                   │
+│  • DAG dependency graph│        │    views                 │        │  • Consul                   │
+│  • Execution planning  │        │  • Real-time updates     │        │                             │
+└───────────────────────┘        └─────────────────────────┘        └───────────────────────────┘
+             │                                                                     │
+             └───────────────────────── tfplugin6 (gRPC) ─────────────────────────┘
+                                              │
+                                   ┌─────────────────────┐
+                                   │  Infra Providers     │
+                                   │  (e.g. AWS)           │
+                                   └─────────────────────┘
+```
+
+- **Rust core** (`src/`) — implements CLI commands, HCL config parsing, the dependency graph/planner, state management, and the OpenTofu provider protocol client.
+- **Go Fiber server** (`fiber/`) — serves the dashboard UI and JSON endpoints for plan/state/module/diff data, and streams live updates over a WebSocket connection. It is launched automatically by the CLI on startup.
+- **State backends** (`src/state.rs`) — persist infrastructure state to a local file, AWS S3, or Consul, with atomic writes, backup cleanup, and retry logic.
+
+## Getting Started
+
+### Prerequisites
+
+- [Rust](https://www.rust-lang.org/tools/install) (stable toolchain)
+- [Go](https://go.dev/dl/) 1.24.4+ (see `fiber/go.mod`)
+- (Optional) Docker & Docker Compose for containerized development
+- (Optional) AWS credentials for the S3 backend, or a running Consul agent for the Consul backend
+
+### Build & Run
 
 ```bash
-# Initialize workspace
+# Build the CLI
+cargo build --release
+
+# Initialize a new Fleetform workspace
 cargo run -- init
 
-# Create execution plan
+# Create an execution plan from your configuration
 cargo run -- plan
 
-# Apply infrastructure
+# Apply the planned changes
 cargo run -- apply
 
-# Start web dashboard
-cd fiber && go run main.go
-# Visit http://localhost:3001
+# Destroy managed infrastructure
+cargo run -- destroy
+```
 
- Commands
+The CLI automatically starts the Fiber web server (`fiber/`) on launch. Visit **http://localhost:3001** to view the dashboard.
 
-fleetform init                      # Initialize workspace
-fleetform plan                      # Create execution plan
-fleetform apply                     # Apply changes
-fleetform providers                 # List providers
-fleetform test                      # Run tests
-fleetform workspace new <name>     # Create workspace
+### Running with Docker Compose
 
- Web Dashboard
+```bash
+docker-compose up --build
+```
 
-http://localhost:3001/ - Interactive dashboard
+This starts the Rust CLI container, the Go Fiber web dashboard (port `3001`), and a Redis instance used for caching.
 
-http://localhost:3001/ui - Plan data
+> **Note:** `Dockerfile.cli` and `fiber/Dockerfile` expect `Cargo.lock` and `fiber/go.sum` respectively, but both files are currently gitignored and not committed. Generate them locally before building (`cargo generate-lockfile` and `cd fiber && go mod tidy`), or the Docker build will fail on a clean checkout.
 
-http://localhost:3001/diff - Plan diff viewer
+## CLI Commands
 
-http://localhost:3001/modules - Module listing
+| Command | Description |
+|---|---|
+| `fleetform init` | Initialize a new Fleetform configuration |
+| `fleetform validate` | Validate configuration files |
+| `fleetform hcl-validate` | Validate HCL syntax |
+| `fleetform plan` | Create an execution plan |
+| `fleetform apply` | Apply configuration changes |
+| `fleetform destroy` | Destroy managed infrastructure |
+| `fleetform fmt` | Format configuration files |
+| `fleetform show` | Show current state |
+| `fleetform config` | Show configuration |
+| `fleetform providers` | List available providers |
+| `fleetform state-mv` | Move resources within state |
+| `fleetform test` | Run infrastructure tests |
+| `fleetform workspace new\|select\|show\|list` | Manage workspaces |
+| `fleetform module` | Manage reusable modules |
+| `fleetform consul` | Read/write state to a Consul backend |
+| `fleetform provision` | Provision resources |
 
-ws://localhost:3001/realtime - Live WebSocket updates
+Global flags: `-C, --chdir <DIR>` to run from a different working directory.
 
+Run `fleetform --help` or `fleetform <command> --help` for full usage details.
 
- Architecture Overview
+## Web Dashboard
 
-+-------------------+          +-----------------------+          +--------------------+
-|                   |          |                        |          |                    |
-|  CLI (Rust Core)   |  <----> |   Go Fiber Web Server  |  <---->  |  Multi-Backend State|
-|  - CLI commands    |         |  - Real-time Dashboard |          |    Management       |
-|  - DAG & Planner   |         |  - WebSocket Updates   |          |  (File, S3, Consul) |
-|  - Execution Plan  |         |                        |          |                    |
-+-------------------+          +-----------------------+          +--------------------+
+Once running, the Fiber server exposes:
 
-        |                               |                                  |
-        |-------------------------------|----------------------------------|
-                                        |
-                            +-----------------------------+
-                            |       Cloud & Infrastructure |
-                            | - AWS for storage & config   |
-                            | - Local/remote execution     |
-                            +-----------------------------+
+| Endpoint | Description |
+|---|---|
+| `GET /` | Interactive dashboard (static UI) |
+| `GET /ui` | Plan data |
+| `GET /config` | Current configuration |
+| `GET /state` | Current state |
+| `GET /modules` | Module listing |
+| `GET /diff` | Plan diff viewer |
+| `WS /realtime` | Live WebSocket updates |
 
-Rust Core:
-Implements the core Infrastructure as Code logic — CLI, dependency graph (DAG), execution planning, and applying infrastructure changes safely with Rust’s memory guarantees.
+## Configuration
 
-Go Fiber Server:
-Hosts a modern, real-time dashboard UI, powered by WebSocket for live updates and visualizing dependency graphs, plans, and diffs.
+Copy `.env.example` to `.env` and fill in the values you need:
 
-Multi-Backend State Management:
-Supports multiple backend storages including local files, AWS S3 buckets, and Consul for flexible state persistence and distributed coordination.
-
-Cloud & Infrastructure:
-Fleetform interacts with cloud providers (AWS) for resource provisioning and uses environment configuration to manage credentials and regions.
-
-
- Configuration
-
-Create a .env file with the following variables:
-
-AWS_ACCESS_KEY_ID=your_key
-AWS_SECRET_ACCESS_KEY=your_secret
+```bash
+AWS_ACCESS_KEY_ID=your_access_key_here
+AWS_SECRET_ACCESS_KEY=your_secret_key_here
 AWS_DEFAULT_REGION=us-east-1
+CONSUL_ENDPOINT=http://localhost:8500
+```
 
- Why Fleetform > OpenTofu
+AWS credentials are required for the S3 state backend and AWS resource provisioning.
 
-Feature	Fleetform	OpenTofu
+`CONSUL_ENDPOINT` in `.env.example` is illustrative only — the `consul` command does not currently read it from the environment. Pass the endpoint and operation as positional arguments instead:
 
-Memory Safety✅ Rust	❌ Go
-Web Dashboard✅ Real-time	❌ CLI only
-Dependency Graphs✅ Visual	❌ Text
-Performance	✅ Compiled	❌ Runtime
-Module Registry✅ Built-in	❌ External
+```bash
+fleetform consul <endpoint> <read|write>
+```
 
+## Modules
 
- Contributing
+Reusable resource configurations live under `modules/`, for example:
 
-1. Fork the repository
+- `modules/aws-vpc` — AWS VPC module
+- `modules/aws-ec2` — AWS EC2 instance module
 
+See `examples/main.tf` for a sample configuration referencing AWS resources.
 
-2. Create a feature branch
+## Development
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local development setup, Windows-specific build notes, code style, and testing guidelines.
 
-3. Make your changes
+```bash
+cargo build
+cargo test
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+```
 
+CI runs on Ubuntu, Windows, and macOS via GitHub Actions (see `.github/workflows/checks.yml`).
 
-4. Run tests: cargo test
+## License
 
-
-5. Submit a pull request
+Fleetform is released under the [MIT License](LICENSE).
