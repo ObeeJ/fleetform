@@ -8,9 +8,12 @@ pub async fn run() -> anyhow::Result<()> {
     let plan = engine::build_plan(&desired, &current);
 
     terminal::info(&format!(
-        "Plan: {} to add, {} to change, {} to destroy",
-        plan.add, plan.change, plan.destroy
+        "Plan: {} to add, {} to change, {} to destroy ({} unchanged)",
+        plan.add, plan.change, plan.destroy, plan.unchanged
     ));
+    if plan.is_empty() {
+        terminal::success("No changes. Infrastructure matches main.tf.");
+    }
     if !plan.live {
         terminal::warn("Dry plan. Set FLEETFORM_LIVE=1 before apply to launch a real machine.");
     }
@@ -20,10 +23,7 @@ pub async fn run() -> anyhow::Result<()> {
             engine::Action::Destroy => "-",
             engine::Action::NoOp => "~",
         };
-        terminal::info(&format!(
-            "{} {} ({})",
-            mark, change.address, change.note
-        ));
+        terminal::info(&format!("{} {} ({})", mark, change.address, change.note));
     }
 
     let plan_path = Path::new("fleetform_plan.json");

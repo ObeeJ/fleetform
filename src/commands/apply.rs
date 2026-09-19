@@ -13,7 +13,7 @@ pub async fn run_with_approval(_auto_approve: bool) -> anyhow::Result<()> {
 
     terminal::info(&format!(
         "Plan: {} to add, {} already present, {} to destroy",
-        plan.add, plan.change, plan.destroy
+        plan.add, plan.unchanged, plan.destroy
     ));
     if plan.add == 0 && plan.destroy == 0 {
         terminal::success("Nothing to apply.");

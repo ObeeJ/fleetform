@@ -33,6 +33,7 @@ pub struct Plan {
     pub changes: Vec<PlannedChange>,
     pub add: usize,
     pub change: usize,
+    pub unchanged: usize,
     pub destroy: usize,
     pub live: bool,
 }
@@ -87,9 +88,14 @@ pub fn build_plan(desired: &[Block], state: &State) -> Plan {
         let name = block.labels[1].clone();
         let existing = find_managed(state, &address);
         let (action, note) = match existing {
-            Some(r) if r.status == "running" || r.status == "available" => {
-                (Action::NoOp, format!("already {} ({})", r.status, r.id.clone().unwrap_or_default()))
-            }
+            Some(r) if r.status == "running" || r.status == "available" => (
+                Action::NoOp,
+                format!(
+                    "already {} ({})",
+                    r.status,
+                    r.id.clone().unwrap_or_default()
+                ),
+            ),
             Some(r) if r.id.is_some() => (
                 Action::Create,
                 format!(
@@ -98,7 +104,9 @@ pub fn build_plan(desired: &[Block], state: &State) -> Plan {
                     r.status
                 ),
             ),
-            Some(r) if r.status == "planned" => (Action::Create, "recorded locally; not yet in AWS".into()),
+            Some(r) if r.status == "planned" => {
+                (Action::Create, "recorded locally; not yet in AWS".into())
+            }
             _ => (Action::Create, "will be created".into()),
         };
         changes.push(PlannedChange {
@@ -112,15 +120,36 @@ pub fn build_plan(desired: &[Block], state: &State) -> Plan {
             note,
         });
     }
-    let add = changes.iter().filter(|c| c.action == Action::Create).count();
-    let change = changes.iter().filter(|c| c.action == Action::NoOp).count();
+    let add = changes
+        .iter()
+        .filter(|c| c.action == Action::Create)
+        .count();
+    let unchanged = changes.iter().filter(|c| c.action == Action::NoOp).count();
+    let destroy = changes
+        .iter()
+        .filter(|c| c.action == Action::Destroy)
+        .count();
     Plan {
         changes,
         add,
-        change,
-        destroy: 0,
+        // There is no in-place update action yet: a resource is created, left
+        // alone, or destroyed. Counting no-ops here made a converged stack
+        // report "N to change" and never look empty.
+        change: 0,
+        unchanged,
+        destroy,
         live,
     }
+}
+
+/// Cloud ids that make a non-live destroy unsafe. Clearing local state while
+/// these exist orphans resources that keep running and keep billing, with no
+/// recorded id left to find them again.
+pub fn blocking_cloud_ids(live: bool, state: &State) -> Vec<String> {
+    if live {
+        return Vec::new();
+    }
+    state.managed.iter().filter_map(|r| r.id.clone()).collect()
 }
 
 pub struct Engine {
@@ -147,7 +176,12 @@ impl Engine {
             .ok_or_else(|| anyhow!("AWS client not initialized"))
     }
 
-    pub async fn apply_plan(&self, plan: &Plan, desired: &[Block], state: &mut State) -> Result<()> {
+    pub async fn apply_plan(
+        &self,
+        plan: &Plan,
+        desired: &[Block],
+        state: &mut State,
+    ) -> Result<()> {
         if !plan.live {
             terminal::warn("FLEETFORM_LIVE is not set. Recording planned resources only.");
             terminal::warn("Export FLEETFORM_LIVE=1 to launch a real machine.");
@@ -173,7 +207,10 @@ impl Engine {
             if change.action != Action::Create {
                 continue;
             }
-            let Some(block) = desired.iter().find(|b| address_of(b).as_deref() == Some(change.address.as_str())) else {
+            let Some(block) = desired
+                .iter()
+                .find(|b| address_of(b).as_deref() == Some(change.address.as_str()))
+            else {
                 continue;
             };
             match change.resource_type.as_str() {
@@ -287,7 +324,13 @@ impl Engine {
     }
 
     async fn describe(&self, id: &str) -> Result<Option<ManagedResource>> {
-        let resp = match self.ec2()?.describe_instances().instance_ids(id).send().await {
+        let resp = match self
+            .ec2()?
+            .describe_instances()
+            .instance_ids(id)
+            .send()
+            .await
+        {
             Ok(r) => r,
             Err(_) => return Ok(None),
         };
@@ -336,7 +379,17 @@ impl Engine {
 
     pub async fn destroy_all(&self, state: &mut State) -> Result<()> {
         if !live_enabled() {
-            terminal::warn("FLEETFORM_LIVE is not set. Destroy will only clear local state.");
+            let blocking = blocking_cloud_ids(false, state);
+            if !blocking.is_empty() {
+                return Err(anyhow!(
+                    "Refusing to destroy: state records {} live cloud resource(s) [{}]. \
+                     Clearing local state would leave them running and billing with no id \
+                     left to recover them. Re-run with FLEETFORM_LIVE=1 to terminate them.",
+                    blocking.len(),
+                    blocking.join(", ")
+                ));
+            }
+            terminal::warn("FLEETFORM_LIVE is not set. Clearing locally planned records only.");
             state.managed.clear();
             state.resources.clear();
             return Ok(());
@@ -506,6 +559,62 @@ mod tests {
         assert_eq!(state.managed.len(), 1);
         assert_eq!(state.managed[0].address, "aws_instance.example");
         assert_eq!(state.managed[0].public_ip.as_deref(), Some("9.9.9.9"));
+    }
+
+    fn managed(address: &str, id: Option<&str>, status: &str) -> ManagedResource {
+        ManagedResource {
+            address: address.into(),
+            resource_type: "aws_instance".into(),
+            name: address.rsplit('.').next().unwrap_or("x").into(),
+            id: id.map(|s| s.to_string()),
+            status: status.into(),
+            public_ip: None,
+        }
+    }
+
+    #[test]
+    fn converged_plan_reports_nothing_to_do() {
+        let mut state = State::new();
+        upsert(
+            &mut state,
+            managed("aws_instance.example", Some("i-abc"), "running"),
+        );
+        let plan = build_plan(&[inst("example")], &state);
+        assert_eq!(plan.add, 0);
+        assert_eq!(plan.change, 0);
+        assert_eq!(plan.destroy, 0);
+        assert_eq!(plan.unchanged, 1);
+        assert!(
+            plan.is_empty(),
+            "a stack matching config must report nothing to do"
+        );
+    }
+
+    #[test]
+    fn destroy_without_live_is_blocked_by_recorded_cloud_ids() {
+        let mut state = State::new();
+        upsert(
+            &mut state,
+            managed("aws_instance.example", Some("i-abc"), "running"),
+        );
+        assert_eq!(blocking_cloud_ids(false, &state), vec!["i-abc".to_string()]);
+    }
+
+    #[test]
+    fn destroy_without_live_allows_planned_only_records() {
+        let mut state = State::new();
+        upsert(&mut state, managed("aws_instance.example", None, "planned"));
+        assert!(blocking_cloud_ids(false, &state).is_empty());
+    }
+
+    #[test]
+    fn live_destroy_is_never_blocked() {
+        let mut state = State::new();
+        upsert(
+            &mut state,
+            managed("aws_instance.example", Some("i-abc"), "running"),
+        );
+        assert!(blocking_cloud_ids(true, &state).is_empty());
     }
 
     #[test]
