@@ -20,10 +20,7 @@ pub async fn run() -> anyhow::Result<()> {
             engine::Action::Destroy => "-",
             engine::Action::NoOp => "~",
         };
-        terminal::info(&format!(
-            "{} {} ({})",
-            mark, change.address, change.note
-        ));
+        terminal::info(&format!("{} {} ({})", mark, change.address, change.note));
     }
 
     let plan_path = Path::new("fleetform_plan.json");

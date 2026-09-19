@@ -6,6 +6,9 @@ pub async fn run() -> anyhow::Result<()> {
     if desired.is_empty() {
         return Err(anyhow::anyhow!("main.tf parsed but contained no blocks"));
     }
-    terminal::success(&format!("Configuration is valid ({} blocks)", desired.len()));
+    terminal::success(&format!(
+        "Configuration is valid ({} blocks)",
+        desired.len()
+    ));
     Ok(())
 }
