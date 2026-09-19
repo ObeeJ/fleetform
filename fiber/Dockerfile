@@ -12,7 +12,7 @@ COPY . .
 RUN go build -o main .
 
 FROM alpine:3.20
-RUN apk --no-cache add ca-certificates \
+RUN apk --no-cache add ca-certificates wget \
     && adduser -D -H -u 10001 fleetform
 WORKDIR /app
 
