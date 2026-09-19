@@ -14,12 +14,12 @@ Fleetform is a Terraform/OpenTofu-style Infrastructure as Code tool. A Rust CLI 
 ## Features
 
 - **HCL-based configuration** — define providers, resources, and modules using familiar HCL syntax, parsed with `hcl-rs`
-- **Dependency graph planning** — resource dependencies are resolved into a DAG (via `petgraph`) before execution
+- **Dependency graph engine** — resources are modeled as a DAG (via `petgraph`) and topologically ordered; wiring the planner to build this graph from parsed configuration (rather than the current fixed example graph) is in progress
 - **Real-time web dashboard** — a Go Fiber server serves plan data, state, module listings, and diffs, with live updates pushed over WebSocket
 - **Workspaces** — create, select, list, and switch between isolated named workspaces
 - **Module system** — fetch and cache reusable configuration modules from a registry
 - **Pluggable state backends** — local file, AWS S3, and Consul, with file locking and automatic retries for safe concurrent access
-- **OpenTofu provider protocol** — communicates with providers over the `tfplugin6` gRPC protocol (via `tonic`/`prost`)
+- **OpenTofu provider protocol (in progress)** — vendors the `tfplugin6` protobuf/gRPC definitions (via `tonic`/`prost`) as the basis for provider communication; the provider client is currently a placeholder and does not yet perform real provider RPCs
 - **Infrastructure testing** — run validation checks against your configuration before applying
 - **Cross-platform** — builds and runs on Linux, macOS, and Windows
 
@@ -51,7 +51,7 @@ Fleetform is a Terraform/OpenTofu-style Infrastructure as Code tool. A Rust CLI 
 ### Prerequisites
 
 - [Rust](https://www.rust-lang.org/tools/install) (stable toolchain)
-- [Go](https://go.dev/dl/) 1.23+
+- [Go](https://go.dev/dl/) 1.24.4+ (see `fiber/go.mod`)
 - (Optional) Docker & Docker Compose for containerized development
 - (Optional) AWS credentials for the S3 backend, or a running Consul agent for the Consul backend
 
@@ -83,6 +83,8 @@ docker-compose up --build
 ```
 
 This starts the Rust CLI container, the Go Fiber web dashboard (port `3001`), and a Redis instance used for caching.
+
+> **Note:** `Dockerfile.cli` and `fiber/Dockerfile` expect `Cargo.lock` and `fiber/go.sum` respectively, but both files are currently gitignored and not committed. Generate them locally before building (`cargo generate-lockfile` and `cd fiber && go mod tidy`), or the Docker build will fail on a clean checkout.
 
 ## CLI Commands
 
@@ -134,7 +136,13 @@ AWS_DEFAULT_REGION=us-east-1
 CONSUL_ENDPOINT=http://localhost:8500
 ```
 
-AWS credentials are required for the S3 state backend and AWS resource provisioning. `CONSUL_ENDPOINT` is required only if using the Consul state backend.
+AWS credentials are required for the S3 state backend and AWS resource provisioning.
+
+`CONSUL_ENDPOINT` in `.env.example` is illustrative only — the `consul` command does not currently read it from the environment. Pass the endpoint and operation as positional arguments instead:
+
+```bash
+fleetform consul <endpoint> <read|write>
+```
 
 ## Modules
 
