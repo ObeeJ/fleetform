@@ -7,6 +7,10 @@ fiber/fiber
 # Environment and local state
 .env
 .fleetform/
+fiber/fleetform.db
+*.db
+*.db-wal
+*.db-shm
 
 # IDE
 .vscode/
