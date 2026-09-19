@@ -8,7 +8,9 @@ services:
       - "3001:3001"
     restart: unless-stopped
     environment:
-      - FIBER_ENV=production
+      - FLEETFORM_DB=/data/fleetform.db
+    volumes:
+      - fleetform_data:/data
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/"]
       interval: 30s
@@ -30,3 +32,6 @@ services:
       - CONSUL_ENDPOINT=${CONSUL_ENDPOINT:-}
     profiles:
       - cli
+
+volumes:
+  fleetform_data:
