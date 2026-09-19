@@ -10,6 +10,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /workspace
 COPY . .
-RUN cargo build --release
+RUN cargo build --release --locked
 
 CMD ["./target/release/fleetform"]

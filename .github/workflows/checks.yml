@@ -17,6 +17,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # Without this every run compiles the whole aws-sdk tree from cold, on
+      # three runners, twice over (release build then test build). That is what
+      # pushed these jobs into 45-minute timeouts.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
       - name: Install protobuf (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -31,7 +37,11 @@ jobs:
         timeout-minutes: 45
       - name: Test
         run: cargo test
-        timeout-minutes: 20
+        # cargo test recompiles the tree in the test profile, separate from the
+        # release build above. 20 minutes was not enough for a cold aws-sdk-ec2
+        # compile on the Windows runner, and a job that always times out never
+        # succeeds, so rust-cache never saves a cache for it to warm up with.
+        timeout-minutes: 45
       - name: Format
         run: cargo fmt --check
       - name: Clippy

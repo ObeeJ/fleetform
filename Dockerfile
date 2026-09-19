@@ -11,13 +11,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY Cargo.toml ./
+# Cargo.lock has to come along: without it the image re-resolves dependencies
+# at build time, so the released binary is not the one CI tested, and a new
+# upstream release can break or change it without a commit.
+COPY Cargo.toml Cargo.lock ./
 COPY build.rs ./
 COPY proto ./proto
 COPY src ./src
 COPY .cargo ./.cargo
 
-RUN cargo build --release
+RUN cargo build --release --locked
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
