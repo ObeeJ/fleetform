@@ -36,8 +36,9 @@ pub fn parse_blocks(contents: &str) -> Result<Vec<Block>, anyhow::Error> {
                 brace_count -= 1;
                 current_block.push(c);
                 if brace_count == 0 {
-                    if !current_block.trim().is_empty() {
-                        blocks.push(parse_block(&current_block)?);
+                    let block = current_block.trim();
+                    if !block.is_empty() {
+                        blocks.push(parse_block(block)?);
                     }
                     current_block.clear();
                 }
@@ -52,9 +53,11 @@ pub fn parse_blocks(contents: &str) -> Result<Vec<Block>, anyhow::Error> {
                 }
             }
             _ => {
-                if brace_count > 0 || !c.is_whitespace() {
-                    current_block.push(c);
-                }
+                // Header whitespace has to survive: dropping it collapsed
+                // `resource "aws_instance" "example"` into a single token, so
+                // parse_block found no labels and every resource was skipped.
+                // Blank space between blocks is trimmed off above instead.
+                current_block.push(c);
             }
         }
     }
@@ -187,4 +190,62 @@ pub fn validate_hcl_syntax(contents: &str) -> Result<(), anyhow::Error> {
     parse_blocks(contents)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn block_header_keeps_its_labels() {
+        let blocks = parse_blocks(
+            "resource \"aws_instance\" \"example\" {\n  instance_type = \"t3.micro\"\n}\n",
+        )
+        .unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].block_type, "resource");
+        assert_eq!(blocks[0].labels, vec!["aws_instance", "example"]);
+        assert_eq!(
+            blocks[0]
+                .attributes
+                .get("instance_type")
+                .map(|s| s.as_str()),
+            Some("t3.micro")
+        );
+    }
+
+    #[test]
+    fn comments_do_not_become_attributes() {
+        let blocks = parse_blocks(
+            "# leading comment\nresource \"aws_s3_bucket\" \"data\" {\n  # inline note\n  bucket = \"example\"\n}\n",
+        )
+        .unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].labels, vec!["aws_s3_bucket", "data"]);
+        assert_eq!(blocks[0].attributes.len(), 1);
+        assert_eq!(
+            blocks[0].attributes.get("bucket").map(|s| s.as_str()),
+            Some("example")
+        );
+    }
+
+    #[test]
+    fn several_blocks_each_keep_their_own_labels() {
+        let blocks = parse_blocks(
+            "resource \"aws_instance\" \"a\" {\n  instance_type = \"t3.micro\"\n}\n\nresource \"aws_instance\" \"b\" {\n  instance_type = \"t3.small\"\n}\n",
+        )
+        .unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].labels, vec!["aws_instance", "a"]);
+        assert_eq!(blocks[1].labels, vec!["aws_instance", "b"]);
+    }
+
+    #[test]
+    fn resources_are_addressable_after_parsing() {
+        let resources = parse_terraform_config(
+            "resource \"aws_instance\" \"example\" {\n  instance_type = \"t3.micro\"\n}\n",
+        )
+        .unwrap();
+        assert_eq!(resources, vec!["aws_instance_example".to_string()]);
+    }
 }
