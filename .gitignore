@@ -23,3 +23,6 @@ Thumbs.db
 *.tmp
 *.temp
 dump.rdb
+
+# Written by `fleetform plan` on every run
+fleetform_plan.json

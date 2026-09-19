@@ -19,19 +19,44 @@ jobs:
             artifact_name: fleetform.exe
             asset_name: fleetform-windows-amd64.exe
           - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: fleetform
+            asset_name: fleetform-macos-arm64
+          - os: macos-13
             target: x86_64-apple-darwin
             artifact_name: fleetform
             asset_name: fleetform-macos-amd64
     runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        target: ${{ matrix.target }}
-    - run: cargo build --release --target ${{ matrix.target }}
-    - uses: softprops/action-gh-release@v1
-      with:
-        files: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      # build.rs compiles proto/tfplugin6.proto and silently falls back to a
+      # placeholder when protoc is missing. Without this the release binary is
+      # built differently from the one CI checked.
+      - name: Install protobuf (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Install protobuf (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+      - name: Install protobuf (Windows)
+        if: runner.os == 'Windows'
+        run: choco install protoc -y
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+        timeout-minutes: 45
+      - name: Rename artifact
+        shell: bash
+        run: |
+          cp "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" \
+             "${{ matrix.asset_name }}"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
