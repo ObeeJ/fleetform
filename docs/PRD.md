@@ -4,6 +4,8 @@
 **Audience:** Founder + whoever implements the next phase.
 **Date:** 2026-09-19
 
+Phase numbers in this file match `docs/ROADMAP.md`. If they drift, the roadmap wins until this table is updated.
+
 ---
 
 ## 1. One-sentence product
@@ -99,10 +101,11 @@ Bring your own `main.tf` / Fleetform HCL. Skip the prompt. Still get plan, sandb
 ### 6.2 Engine
 
 - Desired spec → graph → plan → apply → refresh → destroy.
-- Resource kinds Phase 2+: instance/VM, network, firewall/SG, SSH key, object bucket, managed DB, serverless function, DNS.
+- Phase 1 resource kinds: instance/VM, VPC/subnet, firewall/SG, SSH key, object bucket.
+- Later: managed DB, serverless function, DNS (provider packs in Phase 5).
 - Idempotent by address (`aws_instance.web`).
 - Wait for *ready*, not just API 200.
-- Docker sandbox driver that maps the same spec to Compose services.
+- Docker sandbox driver that maps the same spec to Compose services (Phase 4).
 
 ### 6.3 Providers (order of integration)
 
@@ -117,7 +120,7 @@ A provider ships only with: auth, plan, apply, refresh, destroy, and a fixture t
 
 ### 6.4 AI planner
 
-- Single input box.
+- Phase 6. Single input box.
 - Output is a **structured spec** (JSON/HCL), never hidden side effects.
 - User must confirm plan.
 - Model is not allowed to apply. Engine applies.
@@ -125,18 +128,19 @@ A provider ships only with: auth, plan, apply, refresh, destroy, and a fixture t
 
 ### 6.5 Vault
 
-- Per-org encrypted secret store (AES-256-GCM, envelope key per org).
+- Phase 3. Per-org encrypted secret store (AES-256-GCM, envelope key per org).
 - Values never returned in list APIs; reveal is audited.
 - Engine reads at apply time into memory, not disk.
-- Bring-your-own KMS later (Enterprise).
+- Bring-your-own KMS later (Enterprise / Phase 7).
 
 ### 6.6 UI
 
+- Phase 2 makes Apply real. Visual polish can start earlier but cannot claim apply.
 - Dark canvas, one accent, huge type, pill nav (Byteship-class, not a terminal skin).
 - Home: projects.
-- Project: prompt box, plan card, sandbox toggle, Apply, Destroy.
+- Project: prompt box (Phase 6), plan card, sandbox toggle (Phase 4), Apply, Destroy.
 - Run drawer: live logs.
-- Vault page.
+- Vault page (Phase 3).
 - Settings: members, billing, provider connections.
 - Mobile usable for status + approve, not for first-time graph editing.
 
@@ -146,9 +150,9 @@ A provider ships only with: auth, plan, apply, refresh, destroy, and a fixture t
 
 - Apply path p99 plan < 5s for starter stacks; live apply bounded by provider.
 - No secret in logs, analytics, or LLM traces.
-- Multi-tenant isolation at org id on every query.
+- Multi-tenant isolation at org id on every query (Phase 3).
 - Backups of control-plane DB daily; vault keys separate from DB dumps.
-- Status page + error budget once paid users exist.
+- Status page + error budget once paid users exist (Phase 7).
 
 ---
 
@@ -163,14 +167,18 @@ A provider ships only with: auth, plan, apply, refresh, destroy, and a fixture t
 
 ## 9. Success metrics
 
-| Phase | Exit metric |
-|---|---|
-| 1 | Live EC2 reaches `running` and destroy removes it |
-| 2 | UI Apply creates the same instance; state ids match |
-| 3 | Starter pack (VM + SG + SSH + bucket) apply + destroy in one test account |
-| 4 | Docker sandbox boots an equivalent stack locally |
-| 5 | 10 design-partner projects complete prompt → plan → apply |
-| 6 | Paid conversion ≥ 5% of weekly actives who ran a live apply |
+Must match `docs/ROADMAP.md` exits. Do not advance on this table if the roadmap gate for that phase is red.
+
+| Phase | Work | Exit metric |
+|---|---|---|
+| 0 | Stop the lies | Plan comes from config vs state. UI does not invent rows. |
+| 1 | Honest AWS starter pack | VM + SG + SSH key + S3 apply and destroy in one test account. Zero leftover resources tagged `ManagedBy=fleetform`. Live EC2 reaches `running`. |
+| 2 | UI Apply = engine | Clicking Apply creates the same ids the CLI would. |
+| 3 | Multi-tenant + vault + billing stub | Second user joins an org; vault injects creds; tenant A cannot read tenant B. |
+| 4 | Docker sandbox | Same spec boots locally (e.g. nginx + postgres + minio) and tears down clean. |
+| 5 | Provider packs | Each pack: two apply/destroy cycles on a real account with no manual console cleanup. |
+| 6 | AI intent box | 10 design partners complete prompt → plan → confirm → apply. Model never applies and never sees vault values. |
+| 7 | Easy-mode polish + Enterprise | Premium qualitative “easier than TF” from 20 interviews. SSO only after a written LOI. Paid conversion target: ≥ 5% of weekly actives who ran a live apply. |
 
 ---
 
@@ -191,4 +199,5 @@ A provider ships only with: auth, plan, apply, refresh, destroy, and a fixture t
 | `main.tf` / intent spec | Desired |
 | `.fleetform/state.json` or remote state | Actual |
 | Run record in control plane | Who / when / logs |
-| This PRD + `docs/ROADMAP.md` | What we build next |
+| `docs/ROADMAP.md` | Phase numbering and gates |
+| This PRD | Product scope; phases must stay aligned with the roadmap |
