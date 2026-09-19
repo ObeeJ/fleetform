@@ -31,7 +31,10 @@ jobs:
         timeout-minutes: 45
       - name: Test
         run: cargo test
-        timeout-minutes: 20
+        # cargo test recompiles the tree in the test profile, separate from the
+        # release build above. 20 minutes was not enough for a cold aws-sdk-ec2
+        # compile on the Windows runner.
+        timeout-minutes: 45
       - name: Format
         run: cargo fmt --check
       - name: Clippy
