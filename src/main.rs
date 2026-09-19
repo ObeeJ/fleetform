@@ -10,6 +10,7 @@ use std::{env, thread};
 mod commands;
 mod config;
 mod dag;
+mod engine;
 mod hcl;
 mod modules;
 mod proto;
@@ -20,7 +21,6 @@ mod state;
 mod terminal;
 mod workspace;
 
-// OpenTofu integration modules
 mod tofu {
     pub mod plugin;
     pub mod provider;
@@ -45,66 +45,44 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize a new Fleetform configuration
     Init,
-    /// Validate the configuration files
     Validate,
-    /// Create an execution plan
     Plan,
-    /// Apply the configuration changes
     Apply,
-    /// Destroy managed infrastructure
     Destroy,
-    /// Format configuration files
     Fmt,
-    /// Show current state
     Show,
-    /// Manage workspaces
     Workspace(commands::workspace::WorkspaceCmd),
-    /// Show configuration
     Config,
-    /// List available providers
     Providers,
-    /// Move state resources
     StateMv,
-    /// Run infrastructure tests
     Test,
-    /// Manage modules
     Module(commands::module::ModuleCmd),
-    /// Consul backend operations
     Consul,
-    /// Provision resources
     Provision,
-    /// Validate HCL syntax
     HclValidate,
-    /// Test workspace functionality
     WorkspaceTest,
-    /// Test Consul backend
     ConsulTest,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize logging
     env_logger::init();
-
-    // Setup signal handling
     setup_signal_handling();
 
-    // Start UI server
-    if let Err(e) = start_ui_server() {
-        terminal::warn(&format!("Failed to start UI server: {}", e));
+    if env::var("FLEETFORM_UI").ok().as_deref() == Some("1") {
+        if let Err(e) = start_ui_server() {
+            terminal::warn(&format!("Failed to start UI server: {}", e));
+        }
     }
 
     let cli = Cli::parse();
 
-    // Handle chdir option
     if let Some(dir) = &cli.chdir {
         env::set_current_dir(dir)?;
         terminal::info(&format!("Changed directory to: {}", dir));
     }
 
-    // Execute command
     match cli.command {
         None => {
             terminal::info("Fleetform - Infrastructure as Code CLI");
@@ -150,15 +128,12 @@ async fn main() -> anyhow::Result<()> {
 
 fn start_ui_server() -> Result<(), anyhow::Error> {
     thread::spawn(|| {
-        Command::new("go")
+        let _ = Command::new("go")
             .args(["run", "main.go"])
             .current_dir("fiber")
-            .spawn()
-            .expect("Failed to start Fiber server")
-            .wait()
-            .expect("Fiber server crashed");
+            .spawn();
     });
-    std::thread::sleep(std::time::Duration::from_secs(1)); // Wait for server to start
+    std::thread::sleep(std::time::Duration::from_secs(1));
     Ok(())
 }
 
