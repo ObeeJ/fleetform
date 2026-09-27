@@ -22,4 +22,6 @@ Thumbs.db
 *.log
 *.tmp
 *.temp
-dump.rdb
+
+# Redis snapshot (left behind by redis-server run from this directory)
+*.rdb
