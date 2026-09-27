@@ -2,87 +2,56 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Fleetform CLI Plan Dashboard</title>
+  <title>Fleetform — plan and state</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Fira+Code&display=swap');
-
-    body {
-      font-family: 'Fira Code', monospace;
-      margin: 0;
-      padding: 20px;
-      background-color: #0d1117;
-      color: #c9d1d9;
-    }
-
-    h1 {
-      color: #58a6ff;
-      font-size: 1.6rem;
-      margin-bottom: 10px;
-    }
-
-    .status-line {
-      font-weight: bold;
-      margin-bottom: 10px;
-    }
-
-    .status.connected {
-      color: #3fb950;
-    }
-
-    .status.error {
-      color: #f85149;
-    }
-
-    #plan-output {
-      background-color: #161b22;
-      color: #c9d1d9;
-      padding: 15px;
-      border-radius: 6px;
-      border-left: 4px solid #58a6ff;
-      white-space: pre-wrap;
-      overflow-x: auto;
-      min-height: 200px;
-    }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 24px; background: #050505; color: #f2f2f2; }
+    h1 { font-size: 1.4rem; margin: 0 0 8px; }
+    .sub { color: #9aa; margin-bottom: 20px; }
+    .grid { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+    section { background: #111; border: 1px solid #222; border-radius: 12px; padding: 16px; }
+    pre { white-space: pre-wrap; overflow-x: auto; color: #c6ff4d; font-size: 13px; }
+    .ok { color: #c6ff4d; }
+    .warn { color: #f5c542; }
+    .err { color: #ff6b6b; }
   </style>
 </head>
 <body>
-  <h1>🚀 Fleetform CLI - Plan Output</h1>
-  <div class="status-line">Status: <span id="connection-status" class="status">Connecting...</span></div>
-  <pre id="plan-output">Waiting for plan data...</pre>
-
+  <h1>Fleetform</h1>
+  <p class="sub">This dashboard shows files the CLI wrote. Apply from the CLI with <code>FLEETFORM_LIVE=1</code>. The UI does not launch machines.</p>
+  <div class="grid">
+    <section>
+      <h2>Plan</h2>
+      <div id="plan-status" class="warn">Loading…</div>
+      <pre id="plan-output"></pre>
+    </section>
+    <section>
+      <h2>State</h2>
+      <div id="state-status" class="warn">Loading…</div>
+      <pre id="state-output"></pre>
+    </section>
+  </div>
   <script>
-    const statusEl = document.getElementById('connection-status');
-    const outputEl = document.getElementById('plan-output');
-
-    const ws = new WebSocket('ws://localhost:3001/realtime');
-
-    ws.onopen = () => {
-      statusEl.textContent = 'Connected';
-      statusEl.className = 'status connected';
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        outputEl.textContent = JSON.stringify(data, null, 2);
-      } catch (err) {
-        outputEl.textContent = `Error parsing JSON:\n${event.data}`;
-        console.error('JSON Parse Error:', err);
-      }
-    };
-
-    ws.onerror = () => {
-      statusEl.textContent = 'Connection Error';
-      statusEl.className = 'status error';
-    };
-
-    ws.onclose = () => {
-      if (statusEl.textContent !== 'Connection Error') {
-        statusEl.textContent = 'Disconnected';
-        statusEl.className = 'status error';
-      }
-    };
+    async function load() {
+      const planRes = await fetch('/ui');
+      const stateRes = await fetch('/state');
+      const plan = await planRes.json();
+      const state = await stateRes.json();
+      document.getElementById('plan-output').textContent = JSON.stringify(plan, null, 2);
+      document.getElementById('state-output').textContent = JSON.stringify(state, null, 2);
+      const live = plan.live === true;
+      const running = Array.isArray(state.managed) && state.managed.some(r => r.status === 'running');
+      document.getElementById('plan-status').textContent = live ? 'Live plan' : 'Dry plan (FLEETFORM_LIVE unset)';
+      document.getElementById('plan-status').className = live ? 'ok' : 'warn';
+      document.getElementById('state-status').textContent = running ? 'Machine running' : (state.note || 'No running machine');
+      document.getElementById('state-status').className = running ? 'ok' : 'warn';
+    }
+    load().catch((e) => {
+      document.getElementById('plan-status').textContent = e.message;
+      document.getElementById('plan-status').className = 'err';
+    });
+    setInterval(load, 4000);
   </script>
 </body>
 </html>

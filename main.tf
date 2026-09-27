@@ -1,8 +1,6 @@
 resource "aws_instance" "example" {
+  # Placeholder AMI is resolved at apply time to current Amazon Linux 2023
+  # unless FLEETFORM_AMI is set.
   ami           = "ami-12345678"
-  instance_type = "t2.micro"
-}
-
-resource "aws_s3_bucket" "my_bucket" {
-  bucket = "my-bucket"
+  instance_type = "t3.micro"
 }

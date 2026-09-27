@@ -1,119 +1,61 @@
-# Fleetform 
+<div align="center">
 
-Modern Infrastructure as Code tool built with **Rust + Go Fiber** that surpasses OpenTofu.
+# Fleetform
+
+**A Rust-powered Infrastructure as Code CLI with a real-time web dashboard.**
+
+[![CI](https://github.com/ObeeJ/fleetform/actions/workflows/checks.yml/badge.svg)](https://github.com/ObeeJ/fleetform/actions/workflows/checks.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+</div>
+
+Fleetform is a Terraform/OpenTofu-style Infrastructure as Code tool. A Rust CLI core parses HCL, plans changes, and can apply an EC2 instance until AWS reports `running`. A Go Fiber dashboard reads the files the CLI wrote. The dashboard does not launch machines.
+
+## Phase 1 product loop
+
+```bash
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_DEFAULT_REGION=us-east-1
+
+cargo run -- init
+cargo run -- validate
+cargo run -- plan          # dry plan unless FLEETFORM_LIVE=1
+FLEETFORM_LIVE=1 cargo run -- apply
+cargo run -- show          # expect status=running and an i- id
+cd fiber && go run main.go # http://localhost:3001 reads plan + state
+FLEETFORM_LIVE=1 cargo run -- destroy
+```
+
+Without `FLEETFORM_LIVE=1`, apply records `planned` in `.fleetform/state.json` and does not call AWS. That is intentional.
+
+The example `main.tf` uses a placeholder AMI. Live apply resolves current Amazon Linux 2023, or uses `FLEETFORM_AMI`.
+
+Success means `.fleetform/state.json` contains `"status": "running"` and an instance id. Anything else is not launched.
 
 ## Features
 
-- **Memory-Safe**: Rust core with zero memory leaks  
-- **High Performance**: Compiled binaries faster than Go runtime  
-- **Modern UI**: Real-time web dashboard with WebSocket updates  
-- **Dependency Graphs**: Visual resource relationship mapping  
-- **Module System**: Reusable configuration components  
-- **Multi-Backend**: File, S3, Consul state management  
-- **Testing Framework**: Infrastructure validation  
-- **Cross-Platform**: Windows, Linux, macOS support  
+- **HCL configuration** parsed from `main.tf`
+- **Plan from desired vs state** — create / no-op based on managed resources
+- **Live EC2 apply** gated by `FLEETFORM_LIVE` — waits until the instance is running
+- **Destroy** terminates ids stored in state when live
+- **Local state** in `.fleetform/state.json`, optional S3 upload when `FLEETFORM_S3_BUCKET` is set
+- **Dashboard** shows plan and state files; it will not say a machine is running unless state says so
 
-##  Quick Start
+## Architecture
 
-```bash
-# Initialize workspace
-cargo run -- init
+```
+CLI (Rust)  -->  .fleetform/state.json + fleetform_plan.json  -->  Dashboard (Go Fiber)
+   |
+   +---- AWS EC2 (only when FLEETFORM_LIVE=1)
+```
 
-# Create execution plan
-cargo run -- plan
+## Current maturity
 
-# Apply infrastructure
-cargo run -- apply
+Version `0.1.0`. Phase 1 is **one EC2 instance, default VPC, idempotent re-apply by address**.
 
-# Start web dashboard
-cd fiber && go run main.go
-# Visit http://localhost:3001
+Not yet: custom VPC/subnet/SG, S3 apply, provider plugins as the source of truth, or a SaaS Apply button that mutates AWS.
 
- Commands
+## License
 
-fleetform init                      # Initialize workspace
-fleetform plan                      # Create execution plan
-fleetform apply                     # Apply changes
-fleetform providers                 # List providers
-fleetform test                      # Run tests
-fleetform workspace new <name>     # Create workspace
-
- Web Dashboard
-
-http://localhost:3001/ - Interactive dashboard
-
-http://localhost:3001/ui - Plan data
-
-http://localhost:3001/diff - Plan diff viewer
-
-http://localhost:3001/modules - Module listing
-
-ws://localhost:3001/realtime - Live WebSocket updates
-
-
- Architecture Overview
-
-+-------------------+          +-----------------------+          +--------------------+
-|                   |          |                        |          |                    |
-|  CLI (Rust Core)   |  <----> |   Go Fiber Web Server  |  <---->  |  Multi-Backend State|
-|  - CLI commands    |         |  - Real-time Dashboard |          |    Management       |
-|  - DAG & Planner   |         |  - WebSocket Updates   |          |  (File, S3, Consul) |
-|  - Execution Plan  |         |                        |          |                    |
-+-------------------+          +-----------------------+          +--------------------+
-
-        |                               |                                  |
-        |-------------------------------|----------------------------------|
-                                        |
-                            +-----------------------------+
-                            |       Cloud & Infrastructure |
-                            | - AWS for storage & config   |
-                            | - Local/remote execution     |
-                            +-----------------------------+
-
-Rust Core:
-Implements the core Infrastructure as Code logic — CLI, dependency graph (DAG), execution planning, and applying infrastructure changes safely with Rust’s memory guarantees.
-
-Go Fiber Server:
-Hosts a modern, real-time dashboard UI, powered by WebSocket for live updates and visualizing dependency graphs, plans, and diffs.
-
-Multi-Backend State Management:
-Supports multiple backend storages including local files, AWS S3 buckets, and Consul for flexible state persistence and distributed coordination.
-
-Cloud & Infrastructure:
-Fleetform interacts with cloud providers (AWS) for resource provisioning and uses environment configuration to manage credentials and regions.
-
-
- Configuration
-
-Create a .env file with the following variables:
-
-AWS_ACCESS_KEY_ID=your_key
-AWS_SECRET_ACCESS_KEY=your_secret
-AWS_DEFAULT_REGION=us-east-1
-
- Why Fleetform > OpenTofu
-
-Feature	Fleetform	OpenTofu
-
-Memory Safety✅ Rust	❌ Go
-Web Dashboard✅ Real-time	❌ CLI only
-Dependency Graphs✅ Visual	❌ Text
-Performance	✅ Compiled	❌ Runtime
-Module Registry✅ Built-in	❌ External
-
-
- Contributing
-
-1. Fork the repository
-
-
-2. Create a feature branch
-
-
-3. Make your changes
-
-
-4. Run tests: cargo test
-
-
-5. Submit a pull request
+Fleetform is released under the [MIT License](LICENSE).

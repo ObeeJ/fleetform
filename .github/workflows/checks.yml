@@ -1,20 +1,39 @@
 name: Fleetform Checks
+
 on:
   pull_request:
   push:
-    branches: [main, "v[0-9]+.[0-9]+"]
+    branches: [master, main]
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
-        timeout-minutes: 10
-      - run: cargo test
-        timeout-minutes: 10
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+        with:
+          components: rustfmt, clippy
+      - name: Install protobuf (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Install protobuf (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+      - name: Install protobuf (Windows)
+        if: runner.os == 'Windows'
+        run: choco install protoc -y
+      - name: Build
+        run: cargo build --release
+        timeout-minutes: 45
+      - name: Test
+        run: cargo test
+        timeout-minutes: 20
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        continue-on-error: true

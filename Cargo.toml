@@ -2,8 +2,9 @@
 name = "fleetform"
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
-description = "A Rust-based OpenTofu provider implementation"
+rust-version = "1.85"
+authors = ["ObeeJ <ajayioba2000@gmail.com>"]
+description = "A Rust-based Infrastructure as Code CLI with a Go Fiber dashboard"
 license = "MIT"
 
 [dependencies]
@@ -27,14 +28,17 @@ uuid = { version = "1.0", features = ["v4"] }
 futures-util = "0.3"
 shellwords = "1.1"
 
+[target.'cfg(not(windows))'.dependencies]
+signal-hook = "0.4"
+
 [build-dependencies]
 tonic-build = { version = "0.10", features = ["prost"] }
 prost-build = "0.12"
 
 [profile.dev]
-opt-level = 1  # Better compile times, still good for debugging
-codegen-units = 16  # More parallel code generation
+opt-level = 1
+codegen-units = 16
 incremental = true
 
 [profile.dev.package."*"]
-opt-level = 1  # Optimize all dependencies
+opt-level = 1

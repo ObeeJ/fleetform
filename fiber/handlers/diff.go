@@ -2,44 +2,34 @@ package handlers
 
 import (
 	"encoding/json"
+
 	"github.com/gofiber/fiber/v2"
-	"io/ioutil"
 )
 
 type DiffEntry struct {
 	Action   string `json:"action"`
 	Resource string `json:"resource"`
-	Before   string `json:"before,omitempty"`
-	After    string `json:"after,omitempty"`
+	Note     string `json:"note,omitempty"`
 }
 
 func DiffHandler(c *fiber.Ctx) error {
-	// Read current plan
-	planData, err := ioutil.ReadFile("../fleetform_plan.json")
+	data, _, err := readFirst("../fleetform_plan.json", "fleetform_plan.json")
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": "Failed to read plan"})
+		return c.JSON(fiber.Map{"diff": []DiffEntry{}, "status": "no-plan"})
 	}
 
-	var plan map[string]interface{}
-	json.Unmarshal(planData, &plan)
-
-	// Generate diff view
-	diff := []DiffEntry{
-		{
-			Action:   "create",
-			Resource: "aws_instance.example",
-			After:    "t3.micro instance",
-		},
-		{
-			Action:   "update",
-			Resource: "aws_s3_bucket.my_bucket",
-			Before:   "private bucket",
-			After:    "public bucket",
-		},
+	var plan struct {
+		Changes []struct {
+			Address string `json:"address"`
+			Action  string `json:"action"`
+			Note    string `json:"note"`
+		} `json:"changes"`
 	}
+	_ = json.Unmarshal(data, &plan)
 
-	return c.JSON(fiber.Map{
-		"diff":   diff,
-		"status": "ready",
-	})
+	diff := make([]DiffEntry, 0, len(plan.Changes))
+	for _, ch := range plan.Changes {
+		diff = append(diff, DiffEntry{Action: ch.Action, Resource: ch.Address, Note: ch.Note})
+	}
+	return c.JSON(fiber.Map{"diff": diff, "status": "ready"})
 }

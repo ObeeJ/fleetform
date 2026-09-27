@@ -1,0 +1,32 @@
+services:
+  fleetform-web:
+    build:
+      context: ./fiber
+      dockerfile: Dockerfile
+    image: fleetform-web:prod
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+    environment:
+      - FIBER_ENV=production
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  fleetform-cli:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fleetform-cli:prod
+    restart: "no"
+    environment:
+      - RUST_LOG=info
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - FLEETFORM_S3_BUCKET=${FLEETFORM_S3_BUCKET:-}
+      - CONSUL_ENDPOINT=${CONSUL_ENDPOINT:-}
+    profiles:
+      - cli

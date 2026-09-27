@@ -7,9 +7,9 @@ pub struct ProviderServer;
 impl ProviderServer {
     #[allow(dead_code)]
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
-    
+
     #[allow(dead_code)]
     pub async fn start(&self) -> anyhow::Result<()> {
         crate::terminal::info("OpenTofu provider server placeholder started");

@@ -1,26 +1,26 @@
 use clap::{Parser, Subcommand};
 
+use crate::commands::module::Command as ModuleCommand;
+use crate::commands::workspace::Command as WorkspaceCommand;
 #[cfg(not(windows))]
 use signal_hook::{consts::SIGINT, iterator::Signals};
 use std::process::Command;
 use std::{env, thread};
-use crate::commands::module::Command as ModuleCommand;
-use crate::commands::workspace::Command as WorkspaceCommand;
 
 mod commands;
 mod config;
 mod dag;
+mod engine;
 mod hcl;
 mod modules;
 mod proto;
-mod provisioner;
 mod provider;
+mod provisioner;
 mod registry;
 mod state;
 mod terminal;
 mod workspace;
 
-// OpenTofu integration modules
 mod tofu {
     pub mod plugin;
     pub mod provider;
@@ -45,72 +45,50 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize a new Fleetform configuration
     Init,
-    /// Validate the configuration files
     Validate,
-    /// Create an execution plan
     Plan,
-    /// Apply the configuration changes
     Apply,
-    /// Destroy managed infrastructure
     Destroy,
-    /// Format configuration files
     Fmt,
-    /// Show current state
     Show,
-    /// Manage workspaces
     Workspace(commands::workspace::WorkspaceCmd),
-    /// Show configuration
     Config,
-    /// List available providers
     Providers,
-    /// Move state resources
     StateMv,
-    /// Run infrastructure tests
     Test,
-    /// Manage modules
     Module(commands::module::ModuleCmd),
-    /// Consul backend operations
     Consul,
-    /// Provision resources
     Provision,
-    /// Validate HCL syntax
     HclValidate,
-    /// Test workspace functionality
     WorkspaceTest,
-    /// Test Consul backend
     ConsulTest,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize logging
     env_logger::init();
-
-    // Setup signal handling
     setup_signal_handling();
 
-    // Start UI server
-    if let Err(e) = start_ui_server() {
-        terminal::warn(&format!("Failed to start UI server: {}", e));
+    if env::var("FLEETFORM_UI").ok().as_deref() == Some("1") {
+        if let Err(e) = start_ui_server() {
+            terminal::warn(&format!("Failed to start UI server: {}", e));
+        }
     }
 
     let cli = Cli::parse();
 
-    // Handle chdir option
     if let Some(dir) = &cli.chdir {
         env::set_current_dir(dir)?;
         terminal::info(&format!("Changed directory to: {}", dir));
     }
 
-    // Execute command
     match cli.command {
         None => {
             terminal::info("Fleetform - Infrastructure as Code CLI");
             terminal::info("Use --help for available commands");
             Ok(())
-        },
+        }
         Some(Commands::Init) => commands::init::run().await,
         Some(Commands::Validate) => commands::validate::run().await,
         Some(Commands::Plan) => commands::plan::run().await,
@@ -125,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
             };
             cmd.run(meta).map_err(|e| anyhow::anyhow!(e.to_string()))?;
             Ok(())
-        },
+        }
         Some(Commands::Config) => commands::config::run().await,
         Some(Commands::Providers) => commands::providers::run().await,
         Some(Commands::StateMv) => commands::state_mv::run().await,
@@ -135,42 +113,38 @@ async fn main() -> anyhow::Result<()> {
                 working_dir: std::env::current_dir()?,
                 streams: commands::module::Streams,
             };
-            cmd.run(meta).await.map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            cmd.run(meta)
+                .await
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
             Ok(())
-        },
+        }
         Some(Commands::Consul) => commands::consul::run().await,
         Some(Commands::Provision) => commands::provision::run().await,
         Some(Commands::HclValidate) => commands::hcl_validate::run().await,
         Some(Commands::WorkspaceTest) => commands::workspace_test::run().await,
-        Some(Commands::ConsulTest) => commands::consul_test::run().await
+        Some(Commands::ConsulTest) => commands::consul_test::run().await,
     }
 }
 
 fn start_ui_server() -> Result<(), anyhow::Error> {
     thread::spawn(|| {
-        Command::new("go")
+        let _ = Command::new("go")
             .args(["run", "main.go"])
             .current_dir("fiber")
-            .spawn()
-            .expect("Failed to start Fiber server")
-            .wait()
-            .expect("Fiber server crashed");
+            .spawn();
     });
-    std::thread::sleep(std::time::Duration::from_secs(1)); // Wait for server to start
+    std::thread::sleep(std::time::Duration::from_secs(1));
     Ok(())
 }
 
 fn setup_signal_handling() {
     #[cfg(not(windows))]
     thread::spawn(|| {
-        let mut signals = Signals::new(&[SIGINT]).expect("Failed to register signal handler");
+        let mut signals = Signals::new([SIGINT]).expect("Failed to register signal handler");
         for sig in signals.forever() {
-            match sig {
-                SIGINT => {
-                    crate::terminal::warn("Received interrupt signal, shutting down gracefully...");
-                    std::process::exit(130);
-                }
-                _ => {}
+            if sig == SIGINT {
+                crate::terminal::warn("Received interrupt signal, shutting down gracefully...");
+                std::process::exit(130);
             }
         }
     });
