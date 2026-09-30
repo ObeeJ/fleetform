@@ -13,7 +13,7 @@ pub async fn run_with_approval(_auto_approve: bool) -> anyhow::Result<()> {
 
     terminal::info(&format!(
         "Plan: {} to add, {} already present, {} to destroy",
-        plan.add, plan.change, plan.destroy
+        plan.add, plan.unchanged, plan.destroy
     ));
     if plan.add == 0 && plan.destroy == 0 {
         terminal::success("Nothing to apply.");
@@ -25,8 +25,12 @@ pub async fn run_with_approval(_auto_approve: bool) -> anyhow::Result<()> {
     } else {
         engine::Engine::dry()
     };
-    engine.apply_plan(&plan, &desired, &mut current).await?;
+    // apply_plan records each resource as it is created. Saving only on the
+    // success path discarded those records exactly when they mattered most:
+    // after a partial apply the created resources are real and still billed.
+    let applied = engine.apply_plan(&plan, &desired, &mut current).await;
     state::save(&current).await?;
+    applied?;
 
     if let Ok(bucket) = std::env::var("FLEETFORM_S3_BUCKET") {
         current.write_s3(&bucket, "fleetform.json").await?;

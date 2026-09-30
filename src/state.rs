@@ -120,7 +120,10 @@ impl State {
             crate::terminal::success(&format!("State written to Consul at {}: {}", endpoint, key));
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Failed to write to Consul: {}", response.status()))
+            Err(anyhow::anyhow!(
+                "Failed to write to Consul: {}",
+                response.status()
+            ))
         }
     }
 
@@ -135,7 +138,10 @@ impl State {
                 } else if response.status() == 404 {
                     Ok(State::new())
                 } else {
-                    Err(anyhow::anyhow!("Failed to read from Consul: {}", response.status()))
+                    Err(anyhow::anyhow!(
+                        "Failed to read from Consul: {}",
+                        response.status()
+                    ))
                 }
             }
             Err(e) => {
