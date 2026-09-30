@@ -15,6 +15,8 @@ pub async fn run() -> anyhow::Result<()> {
         )?;
         terminal::info("Wrote starter main.tf");
     }
-    terminal::success("Workspace ready. Next: fleetform plan, then FLEETFORM_LIVE=1 fleetform apply");
+    terminal::success(
+        "Workspace ready. Next: fleetform plan, then FLEETFORM_LIVE=1 fleetform apply",
+    );
     Ok(())
 }

@@ -87,9 +87,14 @@ pub fn build_plan(desired: &[Block], state: &State) -> Plan {
         let name = block.labels[1].clone();
         let existing = find_managed(state, &address);
         let (action, note) = match existing {
-            Some(r) if r.status == "running" || r.status == "available" => {
-                (Action::NoOp, format!("already {} ({})", r.status, r.id.clone().unwrap_or_default()))
-            }
+            Some(r) if r.status == "running" || r.status == "available" => (
+                Action::NoOp,
+                format!(
+                    "already {} ({})",
+                    r.status,
+                    r.id.clone().unwrap_or_default()
+                ),
+            ),
             Some(r) if r.id.is_some() => (
                 Action::Create,
                 format!(
@@ -98,7 +103,9 @@ pub fn build_plan(desired: &[Block], state: &State) -> Plan {
                     r.status
                 ),
             ),
-            Some(r) if r.status == "planned" => (Action::Create, "recorded locally; not yet in AWS".into()),
+            Some(r) if r.status == "planned" => {
+                (Action::Create, "recorded locally; not yet in AWS".into())
+            }
             _ => (Action::Create, "will be created".into()),
         };
         changes.push(PlannedChange {
@@ -112,7 +119,10 @@ pub fn build_plan(desired: &[Block], state: &State) -> Plan {
             note,
         });
     }
-    let add = changes.iter().filter(|c| c.action == Action::Create).count();
+    let add = changes
+        .iter()
+        .filter(|c| c.action == Action::Create)
+        .count();
     let change = changes.iter().filter(|c| c.action == Action::NoOp).count();
     Plan {
         changes,
@@ -147,7 +157,12 @@ impl Engine {
             .ok_or_else(|| anyhow!("AWS client not initialized"))
     }
 
-    pub async fn apply_plan(&self, plan: &Plan, desired: &[Block], state: &mut State) -> Result<()> {
+    pub async fn apply_plan(
+        &self,
+        plan: &Plan,
+        desired: &[Block],
+        state: &mut State,
+    ) -> Result<()> {
         if !plan.live {
             terminal::warn("FLEETFORM_LIVE is not set. Recording planned resources only.");
             terminal::warn("Export FLEETFORM_LIVE=1 to launch a real machine.");
@@ -173,7 +188,10 @@ impl Engine {
             if change.action != Action::Create {
                 continue;
             }
-            let Some(block) = desired.iter().find(|b| address_of(b).as_deref() == Some(change.address.as_str())) else {
+            let Some(block) = desired
+                .iter()
+                .find(|b| address_of(b).as_deref() == Some(change.address.as_str()))
+            else {
                 continue;
             };
             match change.resource_type.as_str() {
@@ -287,7 +305,13 @@ impl Engine {
     }
 
     async fn describe(&self, id: &str) -> Result<Option<ManagedResource>> {
-        let resp = match self.ec2()?.describe_instances().instance_ids(id).send().await {
+        let resp = match self
+            .ec2()?
+            .describe_instances()
+            .instance_ids(id)
+            .send()
+            .await
+        {
             Ok(r) => r,
             Err(_) => return Ok(None),
         };
